@@ -5,8 +5,8 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, query, where,
   onSnapshot, runTransaction,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig } from "./firebase-config.js?v=20261110-2325";
-const APP_VERSION = '10/11 23:25';   // aparece na tela para conferir qual versão está aberta
+import { firebaseConfig } from "./firebase-config.js?v=20261110-2328";
+const APP_VERSION = '10/11 23:28';   // aparece na tela para conferir qual versão está aberta
 
 const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);
@@ -770,6 +770,24 @@ function colEl(col, V){
 }
 
 /* ================= Topo ================= */
+/* Menu da conta: abre ao clicar no seu nome no topo */
+function renderAcct(L){
+  const box = $('#acctMenu');
+  if (!S.acctOpen || !L){ box.hidden = true; box.replaceChildren(); return; }
+  const areas = (L.areas||[]).map(areaName).filter(Boolean);
+  box.hidden = false;
+  box.replaceChildren(
+    el('div',{class:'acct-id'}, el('span',{class:'who',text:initials(L.name)}), el('div',{style:'min-width:0'}, el('b',{text:L.name}), el('small',{text:L.email||''}))),
+    el('dl',{class:'acct-info'},
+      el('dt',{text:'Time'}), el('dd',{text:S.teamName||'—'}),
+      el('dt',{text:'Nível'}), el('dd',{text:levelName(L)}),
+      el('dt',{text:areas.length>1?'Áreas':'Área'}), el('dd',{text:areas.join(', ')||'Sem área'}),
+      S.isAdmin ? el('dt',{text:'Acesso'}) : null, S.isAdmin ? el('dd',{text:'Administrador do sistema'}) : null),
+    el('div',{class:'acct-acts'},
+      el('a',{class:'btn ghost',href:'./index.html#perfil'},'Meu perfil e senha'),
+      el('a',{class:'btn ghost',href:'./index.html'},'Cadastros'),
+      el('button',{class:'btn ghost logout',type:'button',onclick:async e=>{ e.currentTarget.disabled = true; try{ await signOut(auth); }catch(err){} location.replace('./index.html'); }},'Sair da conta')));
+}
 function renderTop(V){
   const bs = document.querySelector('.brand span'); if (bs) bs.textContent = `versão ${APP_VERSION}`;
   const L = linkedMember();
@@ -777,8 +795,10 @@ function renderTop(V){
   $('#newCard').hidden = !V || S.readOnly || S.page==='kpi';
   $('#autoBtn').hidden = !V || S.readOnly;
   const chip = $('#meChip');
-  if (V){ chip.hidden=false; chip.replaceChildren(el('span',{class:'who',text:initials(V.name)}), el('b',{text:V.name}), roleBadge(V)); }
+  const Lm = linkedMember();
+  if (Lm){ chip.hidden=false; chip.replaceChildren(el('span',{class:'who',text:initials(Lm.name)}), el('b',{text:Lm.name}), roleBadge(Lm)); chip.setAttribute('aria-expanded', String(!!S.acctOpen)); }
   else chip.hidden = true;
+  renderAcct(Lm);
   // modo de exibição
   const pages = [['board','Quadro'],['calendar','Calendário'],['kpi','Indicadores']];
   $('#pageSeg').replaceChildren(...pages.map(([k,t])=>el('button',{type:'button','aria-pressed':String(S.page===k),onclick:()=>setPage(k)}, t)));
@@ -1659,7 +1679,9 @@ $('#newCard').addEventListener('click', () => { if (!S.columns.length) { toast('
 $('#autoBtn').addEventListener('click', openAuto);
 $('#teamBtn').addEventListener('click', openTeam);
 $('#bellBtn').addEventListener('click', openNotifs);
-$('#logoutBtn').addEventListener('click', async () => { $('#logoutBtn').disabled = true; try{ await signOut(auth); }catch(e){} location.replace('./index.html'); });
+$('#meChip').addEventListener('click', e => { e.stopPropagation(); S.acctOpen = !S.acctOpen; renderTop(viewer()); });
+document.addEventListener('click', e => { if (S.acctOpen && !e.target.closest('.acct-wrap')){ S.acctOpen = false; renderTop(viewer()); } });
+document.addEventListener('keydown', e => { if (e.key==='Escape' && S.acctOpen){ S.acctOpen = false; renderTop(viewer()); $('#meChip').focus(); } });
 document.addEventListener('click', () => { if (S.menuCol){ S.menuCol=null; render(); } });
 $('#board').addEventListener('wheel', e => {
   const b = e.currentTarget;
@@ -1684,12 +1706,14 @@ onAuthStateChanged(auth, async u => {
   try{
     profile = (await getDoc(doc(fs,'users',u.uid))).data() || {};
     isAdmin = (await getDoc(doc(fs,'admins',u.uid))).exists();
+    S.isAdmin = isAdmin;
   }catch(e){ centerMsg('Não foi possível abrir o quadro', 'Verifique a conexão e recarregue a página.'); return; }
   const status = isAdmin ? 'active' : (profile.status || 'pending');
   if (status !== 'active'){ centerMsg(status === 'inactive' ? 'Conta inativa' : 'Cadastro aguardando aprovação', 'O quadro fica disponível depois que o administrador liberar a sua conta.', 'Voltar'); return; }
   TEAM = profile.teamId || '';
   if (!TEAM){ centerMsg('Você ainda não faz parte de um time', 'Peça para o líder adicionar o seu e-mail ao time. Depois, abra a tela de cadastros para entrar.', 'Abrir cadastros'); return; }
   S.store = 'db';
+  getDoc(doc(fs,'teams',TEAM)).then(t => { S.teamName = t.data()?.name || ''; }).catch(()=>{});
   const got = {};
   const need = [...COLLS, 'levels', 'areas', 'members'];
   const ready = () => { if (!S.loaded && need.every(k=>got[k])){ S.loaded = true; setSync('on','Sincronizado'); } if (S.loaded){ render(); scheduleChecks(); } };

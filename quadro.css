@@ -425,3 +425,19 @@ select.flt{max-width:190px;text-overflow:ellipsis}
 .ab-expand{font-size:18px;color:var(--ink);border:1px solid var(--line);background:var(--card)}
 .ab-rail{border:0;background:transparent;writing-mode:vertical-rl;transform:rotate(180deg);font-weight:600;font-size:12px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;padding:6px 0;cursor:pointer;white-space:nowrap;max-height:60vh;overflow:hidden;text-overflow:ellipsis}
 .ab-rail:hover{color:var(--accent)}
+
+/* menu da conta */
+.acct-wrap{position:relative;display:inline-flex}
+button.me{cursor:pointer;font:inherit;color:inherit}
+button.me:hover,button.me[aria-expanded="true"]{border-color:var(--accent)}
+.acct-menu{position:absolute;top:calc(100% + 8px);right:0;z-index:40;width:300px;max-width:calc(100vw - 32px);background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:0 14px 40px rgba(0,0,0,.22);padding:14px;display:flex;flex-direction:column;gap:12px;text-align:left}
+.acct-id{display:flex;gap:10px;align-items:center}
+.acct-id .who{width:40px;height:40px;font-size:14px;flex:none;margin:0}
+.acct-id b{display:block;font-size:15px}
+.acct-id small{color:var(--muted);font-size:12px;overflow-wrap:anywhere}
+.acct-info{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;font-size:13px;margin:0}
+.acct-info dt{color:var(--muted)}
+.acct-info dd{margin:0;font-weight:600;overflow-wrap:anywhere}
+.acct-acts{display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--line);padding-top:12px}
+.acct-acts .btn,.acct-acts a.btn{justify-content:flex-start;text-decoration:none;color:var(--ink);width:100%}
+.acct-acts .btn.logout{color:var(--bad)}

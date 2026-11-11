@@ -8,8 +8,8 @@ import {
   getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection,
   getDocs, onSnapshot, writeBatch, serverTimestamp, query, where,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig } from "./firebase-config.js?v=20261110-2325";
-const APP_VERSION = '10/11 23:25';   // aparece na tela para conferir qual versão está aberta
+import { firebaseConfig } from "./firebase-config.js?v=20261110-2328";
+const APP_VERSION = '10/11 23:28';   // aparece na tela para conferir qual versão está aberta
 
 /* ================= Configuração ================= */
 const PERM_OPTIONS = {
@@ -157,7 +157,7 @@ if (configured){
       S.isAdmin = (await getDoc(doc(db,'admins',u.uid))).exists();
       S.setupDone = (await getDoc(doc(db,'meta','setup'))).exists();
       if (myStatus() === 'active'){ await loadMembership(); await acceptInvite(); }
-      S.view = S.membership ? 'team' : (S.isAdmin ? 'admin-teams' : 'team');
+      S.view = location.hash === '#perfil' ? 'profile' : (S.membership ? 'team' : (S.isAdmin ? 'admin-teams' : 'team'));
       startSubscriptions();
     }catch(e){ console.error(e); toast(errText(e)); }
     render();
@@ -392,12 +392,28 @@ function topBar(){
     el('span',{class:'team',title:'Versão do sistema',text:`versão ${APP_VERSION}`}),
     el('span',{class:'sp'}),
     S.membership && myStatus()==='active' ? el('a',{class:'btn primary sm',href:'./quadro.html',style:'text-decoration:none'},'Abrir quadro') : null,
-    el('div',{class:'me'},
-      el('span',{class:'who',text:initials(S.profile?.name)}),
-      el('b',{text:S.profile?.name||S.email}),
-      lvl ? el('span',{class:'role'+(lvl.rank===1?' r1':''),text:lvl.name}) : null,
-      S.isAdmin ? el('span',{class:'role adm',text:'Admin'}) : null),
-    el('button',{class:'btn ghost sm',type:'button',onclick:()=>signOut(auth)},'Sair'));
+    el('span',{class:'acct-wrap'},
+      el('button',{type:'button',class:'me',id:'meChip','aria-haspopup':'true','aria-expanded':String(!!S.ui.acct),title:'Sua conta',onclick:e=>{ e.stopPropagation(); S.ui.acct = !S.ui.acct; render(); }},
+        el('span',{class:'who',text:initials(S.profile?.name)}),
+        el('b',{text:S.profile?.name||S.email}),
+        lvl ? el('span',{class:'role'+(lvl.rank===1?' r1':''),text:lvl.name}) : null,
+        S.isAdmin ? el('span',{class:'role adm',text:'Admin'}) : null),
+      S.ui.acct ? acctMenu(t, lvl) : null));
+}
+function acctMenu(t, lvl){
+  const areas = S.membership ? areaNames(S.membership.teamId, areasOf(S.membership)) : '';
+  const st = {active:'Ativa', pending:'Aguardando aprovação', inactive:'Inativa'}[myStatus()];
+  return el('div',{class:'acct-menu',role:'dialog','aria-label':'Sua conta'},
+    el('div',{class:'acct-id'}, el('span',{class:'who',text:initials(S.profile?.name)}), el('div',{style:'min-width:0'}, el('b',{text:S.profile?.name||S.email}), el('small',{text:S.email}))),
+    el('dl',{class:'acct-info'},
+      el('dt',{text:'Time'}), el('dd',{text:t?.name || 'Sem time'}),
+      S.membership ? el('dt',{text:'Nível'}) : null, S.membership ? el('dd',{text:lvl?.name||'—'}) : null,
+      S.membership ? el('dt',{text:'Áreas'}) : null, S.membership ? el('dd',{text:areas||'Sem área'}) : null,
+      el('dt',{text:'Conta'}), el('dd',{text: st + (S.isAdmin ? ' · Administrador' : '')})),
+    el('div',{class:'acct-acts'},
+      el('button',{class:'btn ghost',type:'button',onclick:()=>{ S.ui.acct=false; S.view='profile'; render(); }},'Meu perfil e senha'),
+      S.membership && myStatus()==='active' ? el('a',{class:'btn ghost',href:'./quadro.html'},'Abrir quadro') : null,
+      el('button',{class:'btn ghost logout',type:'button',onclick:()=>{ S.ui.acct=false; signOut(auth); }},'Sair da conta')));
 }
 
 function waitingView(){
@@ -430,6 +446,8 @@ function levelSelect(tid, id, value, disabled, onchange){
     opts.map(l=>el('option',{value:l.id,selected:l.id===value,disabled:!levelAllowed(tid,l.id)||null,text:`${l.rank} · ${l.name}`})));
 }
 const areaNames = (tid, ids) => ids.map(id=>areaName(tid,id)).filter(Boolean).join(', ');
+document.addEventListener('click', e => { if (S.ui.acct && !e.target.closest('.acct-wrap')){ S.ui.acct = false; render(); } });
+document.addEventListener('keydown', e => { if (e.key==='Escape' && S.ui.acct){ S.ui.acct = false; render(); } });
 /* Fecha a lista de áreas ao clicar fora dela (a lista fica aberta enquanto se marcam várias áreas) */
 document.addEventListener('click', e => {
   let changed = false;
