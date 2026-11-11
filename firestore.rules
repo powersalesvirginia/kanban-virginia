@@ -24,6 +24,8 @@ service cloud.firestore {
     function userPath() { return /databases/$(database)/documents/users/$(request.auth.uid); }
     function userActive() { return isAdmin() || (exists(userPath()) && get(userPath()).data.get('status', 'pending') == 'active'); }
 
+    function myTeamId() { return get(userPath()).data.get('teamId', ''); }
+
     function memberPath(t) { return /databases/$(database)/documents/teams/$(t)/members/$(request.auth.uid); }
     function isMember(t) { return signedIn() && userActive() && exists(memberPath(t)) && get(memberPath(t)).data.active == true; }
     function levelOf(t, levelId) { return get(/databases/$(database)/documents/teams/$(t)/levels/$(levelId)).data; }
@@ -33,6 +35,8 @@ service cloud.firestore {
 
     // Gerenciar o time = administrador, ou membro ativo cujo nível tem "Gerenciar time"
     function canManage(t) { return isAdmin() || (isMember(t) && myLevel(t).perms.manageTeam == true); }
+    // Gerencia algum time (usado para o líder ver as contas disponíveis)
+    function managesATeam() { return userActive() && exists(userPath()) && myTeamId() != '' && canManage(myTeamId()); }
     // Quem gerencia só cadastra pessoas em níveis iguais ou abaixo do seu (administrador cadastra qualquer nível)
     function levelAllowed(t, levelId) { return isAdmin() || levelOf(t, levelId).rank >= myLevel(t).rank; }
 
@@ -56,9 +60,12 @@ service cloud.firestore {
     // ---------- Perfil ----------
     match /users/{uid} {
       allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
-      // toda conta nova nasce aguardando aprovação
+      // quem gerencia um time vê só as contas aprovadas que ainda não estão em nenhum time (para adicionar ao time)
+      allow list: if managesATeam() && resource.data.status == 'active' && resource.data.teamId == '';
+      // toda conta nova nasce aguardando aprovação e sem time
       allow create: if signedIn() && request.auth.uid == uid && request.resource.data.email == myEmail()
-        && request.resource.data.status == 'pending';
+        && request.resource.data.status == 'pending'
+        && request.resource.data.get('teamId', '') == '';
       // o administrador aprova, inativa, reativa e exclui
       allow update: if isAdmin();
       allow delete: if isAdmin() && request.auth.uid != uid;
