@@ -8,8 +8,8 @@ import {
   getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection,
   getDocs, onSnapshot, writeBatch, serverTimestamp, query, where,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig } from "./firebase-config.js?v=20261110-2342";
-const APP_VERSION = '10/11 23:42';   // aparece na tela para conferir qual versão está aberta
+import { firebaseConfig } from "./firebase-config.js?v=20261111-0855";
+const APP_VERSION = '11/11 08:55';   // aparece na tela para conferir qual versão está aberta
 
 /* ================= Configuração ================= */
 const PERM_OPTIONS = {
@@ -114,7 +114,7 @@ function ensureDirectory(){
   S.dirSub = true;
   subs.push(onSnapshot(query(collection(db,'users'), where('status','==','active'), where('teamId','==','')),
     s => { S.directory = s.docs.map(d=>({id:d.id, ...d.data()})).sort(byName); render(); },
-    () => { S.directory = []; }));
+    e => { console.warn('lista de contas', e?.code); S.directory = []; setTimeout(()=>{ S.dirSub = false; render(); }, 15000); }));   // tenta de novo (ex.: regras recém-publicadas)
 }
 const matches = (u, q) => !q || (u.name||'').toLowerCase().includes(q) || (u.email||'').toLowerCase().includes(q);
 /* Campo de busca de contas: digita nome ou e-mail, escolhe na lista; aceita também um e-mail de quem ainda não tem conta */
@@ -259,7 +259,12 @@ function startSubscriptions(){
       render();
     }));
     subs.push(onSnapshot(collection(db,'admins'), s => { S.admins = s.docs.map(d=>({id:d.id, ...d.data()})); render(); }));
-    subs.push(onSnapshot(collection(db,'users'), s => { S.users = s.docs.map(d=>({id:d.id, ...d.data()})).sort(byName); render(); }));
+    subs.push(onSnapshot(collection(db,'users'), s => {
+      S.users = s.docs.map(d=>({id:d.id, ...d.data()})).sort(byName);
+      // contas antigas sem o campo teamId não aparecem na busca do líder: completa o campo (vazio = sem time)
+      for (const d of s.docs) if (!('teamId' in d.data())) updateDoc(d.ref, {teamId:''}).catch(()=>{});
+      render();
+    }));
     subs.push(onSnapshot(collection(db,'inviteIndex'), s => { S.inviteIdx = Object.fromEntries(s.docs.map(d=>[d.id, d.data().teamId])); render(); }, ()=>{}));
   }
   if (!S.membership){
