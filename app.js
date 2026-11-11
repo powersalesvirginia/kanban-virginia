@@ -272,12 +272,25 @@ function authView(){
       if (m === 'signup'){
         if (name.value.trim().length < 3) throw {code:'x-name'};
         S.pendingName = name.value.trim();
-        const cred = await createUserWithEmailAndPassword(auth, em, pass.value);
-        await updateProfile(cred.user, {displayName:S.pendingName});
+        try{
+          const cred = await createUserWithEmailAndPassword(auth, em, pass.value);
+          await updateProfile(cred.user, {displayName:S.pendingName});
+        }catch(err){
+          // o e-mail já tem login (por exemplo, cadastro excluído pelo administrador): tenta entrar com a mesma senha,
+          // e o sistema recria o cadastro como "aguardando aprovação"
+          if (err.code !== 'auth/email-already-in-use') throw err;
+          try{ await signInWithEmailAndPassword(auth, em, pass.value); }
+          catch(e2){ throw {code:'x-exists'}; }
+        }
       } else {
         await signInWithEmailAndPassword(auth, em, pass.value);
       }
-    }catch(err){ S.authErr = err.code==='x-name' ? 'Informe seu nome completo.' : errText(err); S.busy=false; render(); return; }
+    }catch(err){
+      S.authErr = err.code==='x-name' ? 'Informe seu nome completo.'
+        : err.code==='x-exists' ? 'Este e-mail já tem um login, mas a senha não confere. Use “Entrar” com a senha que você criou antes, ou “Esqueci a senha” para criar uma nova.'
+        : errText(err);
+      S.busy=false; render(); return;
+    }
     S.busy=false;
   };
   const title = {login:'Entrar', signup:'Criar conta', reset:'Redefinir senha'}[m];
