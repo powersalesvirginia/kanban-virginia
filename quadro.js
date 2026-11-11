@@ -73,7 +73,7 @@ const PREF_KEY = 'kanban-virginia-view';
 
 const S = {
   columns:[], cards:[], members:[], areas:[], levels:[], claims:[], requesters:[], notifications:[], labels:[], recurrences:[], localComments:[],
-  q:'', label:'', who:'', req:'', view:'mine', page:'board', sectorArea:'', kpiPeriod:'month', kpiPerson:null, calMonth:'',
+  q:'', label:'', who:'', req:'', areaFilter:'', barCollapsed:false, view:'mine', page:'board', sectorArea:'', kpiPeriod:'month', kpiPerson:null, calMonth:'',
   loaded:false, store:'pending', readOnly:false, me:null, isOwner:false, viewAs:null, booted:false, names:{},
   menuCol:null, quickCol:null, editCol:null, teamOpen:false, autoOpen:false,
 };
@@ -210,15 +210,20 @@ function boardCards(V){
   const vis = visibleCards(V);
   if (S.view === 'delegated') return vis.filter(c => c.assigneeId && c.assigneeId !== V.id && delegatorsOf(c).includes(V.id));
   if (S.view === 'sector'){
-    const a = seesAll(V) ? S.sectorArea : (V.areas||[])[0];
-    if (!a) return vis;
-    return vis.filter(c => c.area === a || (mem(c.assigneeId)?.areas||[])[0] === a);
+    if (seesAll(V)) return vis;
+    const mine = V.areas || [];
+    return mine.length ? vis.filter(c => mine.some(a => cardInArea(c, a))) : vis;
   }
   return vis.filter(c => c.assigneeId === V.id || (!c.assigneeId && c.createdBy === V.id) || (c.validatorId === V.id && isValCol(c) && c.validation?.status === 'pending'));
 }
-function passesFilters(c){
+/* Área do cartão: a escolhida no cartão ou, sem isso, as áreas do responsável */
+const cardInArea = (c, a) => c.area === a || (!c.area && (mem(c.assigneeId)?.areas||[]).includes(a));
+/* Áreas que a pessoa pode filtrar: todas (quem vê tudo) ou as suas */
+const areaChoices = V => !V ? [] : seesAll(V) ? S.areas.slice() : S.areas.filter(a => (V.areas||[]).includes(a.id));
+function passesFilters(c, skipArea){
   const q = S.q.trim().toLowerCase();
-  return (!S.label || (c.labels||[]).includes(S.label))
+  return (skipArea || !S.areaFilter || cardInArea(c, S.areaFilter))
+    && (!S.label || (c.labels||[]).includes(S.label))
     && (!S.who || (S.who==='__none' ? !c.assigneeId : c.assigneeId===S.who))
     && (!S.req || c.requester===S.req)
     && (!q || (c.title||'').toLowerCase().includes(q) || (c.description||'').toLowerCase().includes(q) || (mem(c.assigneeId)?.name||'').toLowerCase().includes(q) || reqName(c.requester).toLowerCase().includes(q));
@@ -729,7 +734,7 @@ function colEl(col, V){
       ? el('input',{id:'rename-'+col.id,value:col.title,'aria-label':'Nome da coluna',onkeydown:e=>{ if(e.key==='Enter') e.target.blur(); if(e.key==='Escape'){S.editCol=null;render();} },
           onblur:e=>{ const v=e.target.value.trim(); S.editCol=null; if(v && v!==col.title) saveCol({...col,title:v}); else render(); }})
       : el('h2',{text:col.title + (col.validation?' ✓':'') + (col.waiting?' ⏸':''), title: col.validation ? 'Etapa de validação' : col.waiting ? 'Etapa de Aguardando: entra com justificativa e aprovação' : col.done ? 'Etapa final' : null, ondblclick:()=>{ if(manage){S.editCol=col.id;render();} }}),
-    el('span',{class:'count',title:'Cartões nesta visualização',text:String(boardCards(V).filter(c=>c.columnId===col.id).length)}),
+    el('span',{class:'count',title:'Cartões nesta visualização',text:String(boardCards(V).filter(c=>c.columnId===col.id && passesFilters(c)).length)}),
     manage ? el('button',{class:'icon-btn',type:'button','aria-label':'Opções da coluna',onclick:e=>{ e.stopPropagation(); S.menuCol = S.menuCol===col.id?null:col.id; render(); }}, '⋯') : null
   );
   if (manage && S.menuCol===col.id){
@@ -791,7 +796,7 @@ function renderTop(V){
   }
   document.querySelector('.viewbar').hidden = !V;
   const sa = $('#sectorArea');
-  sa.hidden = !(V && seesAll(V) && S.view==='sector' && S.page!=='kpi');
+  sa.hidden = true;
   if (!sa.hidden){
     sa.replaceChildren(el('option',{value:'',text:'Todas as áreas'}), ...S.areas.slice().sort(byName).map(a=>el('option',{value:a.id,text:a.name})));
     if (!S.areas.some(a=>a.id===S.sectorArea)) S.sectorArea = '';
@@ -839,6 +844,26 @@ function renderTop(V){
   } else bn.hidden = true;
 }
 
+/* Barra lateral de áreas (e lista no topo em telas estreitas) para quem enxerga mais de uma área */
+function renderAreaBar(V){
+  const bar = $('#areaBar'), sel = $('#areaSel');
+  const choices = areaChoices(V);
+  if (choices.length < 2){ bar.hidden = true; sel.hidden = true; if (S.areaFilter && !choices.some(a=>a.id===S.areaFilter)) S.areaFilter = ''; return; }
+  if (S.areaFilter && !choices.some(a=>a.id===S.areaFilter)) S.areaFilter = '';
+  const pool = boardCards(V).filter(c => !isDoneCard(c) && passesFilters(c, true));
+  const count = a => pool.filter(c => !a || cardInArea(c, a)).length;
+  const pick = a => { S.areaFilter = a; S.kpiPerson = null; savePrefs(); render(); };
+  bar.hidden = false; sel.hidden = false;
+  document.body.classList.toggle('bar-collapsed', !!S.barCollapsed);
+  bar.replaceChildren(
+    el('div',{class:'ab-head'}, el('b',{text:'Áreas'}), el('button',{type:'button',class:'icon-btn',title:'Recolher',onclick:()=>{ S.barCollapsed = true; savePrefs(); render(); }},'‹')),
+    el('button',{type:'button',class:'ab-item'+(!S.areaFilter?' on':''),onclick:()=>pick('')}, el('span',{text:'Todas as áreas'}), el('small',{text:String(count(''))})),
+    ...choices.map(a=>el('button',{type:'button',class:'ab-item'+(S.areaFilter===a.id?' on':''),onclick:()=>pick(a.id)}, el('span',{text:a.name}), el('small',{text:String(count(a.id))}))),
+    el('p',{class:'ab-note',text:'O número mostra as atividades em aberto nesta visualização.'}));
+  sel.replaceChildren(el('option',{value:'',text:'Todas as áreas'}), ...choices.map(a=>el('option',{value:a.id,text:a.name})));
+  sel.value = S.areaFilter || '';
+  $('#areaOpen').hidden = !S.barCollapsed;
+}
 function render(){
   const b = $('#board');
   const sx = b.scrollLeft, sy = b.scrollTop;
@@ -846,6 +871,7 @@ function render(){
   if (!S.loaded){ b.className='board'; b.append(el('div',{class:'empty'}, el('h2',{text:'Carregando o quadro…'}))); return; }
   const V = viewer();
   renderTop(V);
+  renderAreaBar(V);
   if (!V){ b.className='board'; b.append(gateEl()); return; }
   if (S.page === 'calendar'){ b.className='page'; b.append(calendarEl(V)); b.scrollTop = sy; refreshModals(); return; }
   if (S.page === 'kpi'){ b.className='page'; b.append(kpiEl(V)); b.scrollTop = sy; refreshModals(); return; }
@@ -878,7 +904,7 @@ function gateEl(){
 function nextOrder(colId){ const os=S.cards.filter(c=>c.columnId===colId).map(c=>c.order||0); return (os.length?Math.max(...os):0)+1000; }
 function newCardBase(V, colId){
   return {id:uid('card_'), columnId:colId || workCols()[0]?.id || colsSorted()[0]?.id, title:'', description:'', labels:[], priority:'',
-    area:(V.areas||[])[0]||'', assigneeId:V.id, createdBy:V.id, assignedBy:V.id, assignedAt:nowISO(), delegators:[], requester:'', due:'',
+    area:defaultArea(V), assigneeId:V.id, createdBy:V.id, assignedBy:V.id, assignedAt:nowISO(), delegators:[], requester:'', due:'',
     checklist:[], links:[], requiresValidation:false, validatorId:'', validation:null, ack:null, lateReason:'', createdAt:nowISO()};
 }
 function addQuick(colId, title){
@@ -1286,7 +1312,12 @@ function calendarEl(V){
 }
 
 /* ================= Indicadores ================= */
+const defaultArea = V => (S.areaFilter && areasFor(V).some(a=>a.id===S.areaFilter)) ? S.areaFilter : ((V.areas||[])[0] || '');
 function kpiPeople(V){
+  const list = kpiPeopleAll(V);
+  return S.areaFilter ? list.filter(p => (p.areas||[]).includes(S.areaFilter) || p.id === V.id && list.length === 1) : list;
+}
+function kpiPeopleAll(V){
   const k = permsOf(V).kpi || 'own';
   const act = S.members.filter(m=>m.active);
   if (k === 'all') return act.sort((a,b)=>rank(a)-rank(b) || byName(a,b));
@@ -1348,7 +1379,7 @@ function kpiEl(V){
   const selId = single ? people[0].id : S.kpiPerson;
   const K = selId ? rows.find(r=>r.p.id===selId).k : sumK(rows.map(r=>r.k));
   const who = selId ? mem(selId) : null;
-  const title = who ? (who.id===V.id ? `${who.name} (você)` : who.name) : ((permsOf(V).kpi||'own')==='all' ? 'Toda a equipe' : 'Você e sua equipe');
+  const title = (who ? (who.id===V.id ? `${who.name} (você)` : who.name) : ((permsOf(V).kpi||'own')==='all' ? 'Toda a equipe' : 'Você e sua equipe')) + (S.areaFilter && !who ? ` · ${areaName(S.areaFilter)}` : '');
   const pct = pctOf(K);
   const tiles = el('div',{class:'tiles'},
     tile('Entregas no período', K.delivered, ''),
@@ -1407,7 +1438,7 @@ function ruleForm(V, r){
   if (!A.draft || A.draft._for !== key){
     const firstWork = workCols()[0] || colsSorted()[0];
     A.draft = r ? {...JSON.parse(JSON.stringify(r)), checklistText:(r.checklist||[]).join('\n'), _for:key}
-      : {id:uid('rec_'), title:'', description:'', assigneeId:V.id, area:(V.areas||[])[0]||'', requester:'', labels:[], priority:'', checklistText:'',
+      : {id:uid('rec_'), title:'', description:'', assigneeId:V.id, area:defaultArea(V), requester:'', labels:[], priority:'', checklistText:'',
          columnId:firstWork?.id||'', freq:'weekly', weekdays:[1], businessDays:true, monthDay:'1', dueOffset:0, startDate:todayISO(), active:true, requiresValidation:false, createdBy:V.id, _for:key};
   }
   const d = A.draft;
@@ -1523,10 +1554,10 @@ function simpleList({items, editKey, inputId, placeholder, onAdd, onRename, onDe
     })) : null];
 }
 const PERM_TXT = {
-  see:{own:'Só as suas', area_peers:'As suas e as de colegas do mesmo nível na área', area_below:'As suas e as dos níveis abaixo na área', all:'Todas do time'},
-  edit:{assigned:'Só as atribuídas a ele', below:'As suas e as dos níveis abaixo na área', all:'Todas do time'},
-  assign:{self:'Só para si', below_area:'Níveis abaixo, na sua área', below_any:'Níveis abaixo, em qualquer área', any:'Qualquer pessoa do time'},
-  kpi:{own:'Os seus', area:'Os seus e os dos níveis abaixo na área', all:'De todo o time'},
+  see:{own:'Só as suas', area_peers:'As suas e as de colegas do mesmo nível nas suas áreas', area_below:'As suas e as dos níveis abaixo nas suas áreas', all:'Todas do time'},
+  edit:{assigned:'Só as atribuídas a ele', below:'As suas e as dos níveis abaixo nas suas áreas', all:'Todas do time'},
+  assign:{self:'Só para si', below_area:'Níveis abaixo, nas suas áreas', below_any:'Níveis abaixo, em qualquer área', any:'Qualquer pessoa do time'},
+  kpi:{own:'Os seus', area:'Os seus e os dos níveis abaixo nas suas áreas', all:'De todo o time'},
 };
 function drawTeam(){
   const tabs = [['etiquetas','Etiquetas'],['solicitantes','Áreas solicitantes'],['regras','Níveis e regras']];
@@ -1598,15 +1629,17 @@ function openNotifs(){
 }
 
 /* ================= Eventos globais ================= */
-function savePrefs(){ try{ localStorage.setItem(PREF_KEY, JSON.stringify({view:S.view, page:S.page, sectorArea:S.sectorArea, kpiPeriod:S.kpiPeriod})); }catch(e){} }
+function savePrefs(){ try{ localStorage.setItem(PREF_KEY, JSON.stringify({view:S.view, page:S.page, areaFilter:S.areaFilter, barCollapsed:!!S.barCollapsed, kpiPeriod:S.kpiPeriod})); }catch(e){} }
 function setView(k){ S.view = k; S.who=''; savePrefs(); render(); }
 function setPage(k){ S.page = k; savePrefs(); render(); }
-try{ const p = JSON.parse(localStorage.getItem(PREF_KEY)||'{}'); if (p.view) S.view=p.view; if (p.page) S.page=p.page; if (p.sectorArea) S.sectorArea=p.sectorArea; if (p.kpiPeriod) S.kpiPeriod=p.kpiPeriod; }catch(e){}
+try{ const p = JSON.parse(localStorage.getItem(PREF_KEY)||'{}'); if (p.view) S.view=p.view; if (p.page) S.page=p.page; if (p.areaFilter) S.areaFilter=p.areaFilter; S.barCollapsed=!!p.barCollapsed; if (p.kpiPeriod) S.kpiPeriod=p.kpiPeriod; }catch(e){}
 $('#q').addEventListener('input', e => { S.q=e.target.value; render(); });
 $('#flt').addEventListener('change', e => { S.label=e.target.value; render(); });
 $('#fltWho').addEventListener('change', e => { S.who=e.target.value; render(); });
 $('#fltReq').addEventListener('change', e => { S.req=e.target.value; render(); });
 $('#sectorArea').addEventListener('change', e => { S.sectorArea=e.target.value; savePrefs(); render(); });
+$('#areaSel').addEventListener('change', e => { S.areaFilter=e.target.value; S.kpiPerson=null; savePrefs(); render(); });
+$('#areaOpen').addEventListener('click', () => { S.barCollapsed=false; savePrefs(); render(); });
 $('#kpiPeriod').addEventListener('change', e => { S.kpiPeriod=e.target.value; savePrefs(); render(); });
 $('#viewAsSel').addEventListener('change', e => { S.viewAs = e.target.value || null; S.who=''; S.kpiPerson=null; render(); });
 $('#newCard').addEventListener('click', () => { if (!S.columns.length) { toast('O quadro ainda não tem colunas.'); return; } openCard(null); });
@@ -1651,7 +1684,7 @@ onAuthStateChanged(auth, async u => {
   onSnapshot(collection(fs,'teams',TEAM,'levels'), s => { S.levels = s.docs.map(d=>({id:d.id, ...d.data()})); got.levels = true; ready(); }, fail);
   onSnapshot(collection(fs,'teams',TEAM,'areas'), s => { S.areas = s.docs.map(d=>({id:d.id, ...d.data()})).sort(byName); got.areas = true; ready(); }, fail);
   onSnapshot(collection(fs,'teams',TEAM,'members'), s => {
-    S.members = s.docs.map(d=>{ const m = d.data(); return {id:d.id, userId:d.id, name:m.name||m.email, email:m.email, levelId:m.levelId, areas:m.areaId?[m.areaId]:[], active:m.active!==false}; });
+    S.members = s.docs.map(d=>{ const m = d.data(); return {id:d.id, userId:d.id, name:m.name||m.email, email:m.email, levelId:m.levelId, areas:(m.areaIds&&m.areaIds.length)?m.areaIds:(m.areaId?[m.areaId]:[]), active:m.active!==false}; });
     const me = S.members.find(m=>m.id===u.uid);
     if (got.members && (!me || !me.active)){ centerMsg('Seu acesso ao time foi encerrado', 'Fale com o líder do seu time.', 'Abrir cadastros'); return; }
     got.members = true; ready();

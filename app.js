@@ -12,17 +12,22 @@ import { firebaseConfig } from "./firebase-config.js";
 
 /* ================= Configuração ================= */
 const PERM_OPTIONS = {
-  see: [['own','Só as suas'],['area_peers','As suas e as de colegas do mesmo nível na área'],['area_below','As suas e as dos níveis abaixo na área'],['all','Todas do time']],
-  edit: [['assigned','Só as atribuídas a ele'],['below','As suas e as dos níveis abaixo na área'],['all','Todas do time']],
-  assign: [['self','Só para si'],['below_area','Níveis abaixo, na sua área'],['below_any','Níveis abaixo, em qualquer área'],['any','Qualquer pessoa do time']],
-  kpi: [['own','Os seus'],['area','Os seus e os dos níveis abaixo na área'],['all','De todo o time']],
+  see: [['own','Só as suas'],['area_peers','As suas e as de colegas do mesmo nível nas suas áreas'],['area_below','As suas e as dos níveis abaixo nas suas áreas'],['all','Todas do time']],
+  edit: [['assigned','Só as atribuídas a ele'],['below','As suas e as dos níveis abaixo nas suas áreas'],['all','Todas do time']],
+  assign: [['self','Só para si'],['below_area','Níveis abaixo, nas suas áreas'],['below_any','Níveis abaixo, em qualquer área'],['any','Qualquer pessoa do time']],
+  kpi: [['own','Os seus'],['area','Os seus e os dos níveis abaixo nas suas áreas'],['all','De todo o time']],
 };
 const PERM_FLAGS = [['requireValidation','Exigir validação'],['approveHold','Aprovar pausas'],['manageTeam','Gerenciar time']];
 const DEFAULT_LEVELS = [
   {id:'lider', name:'Líder', rank:1, perms:{see:'all', edit:'all', assign:'any', kpi:'all', requireValidation:true, approveHold:true, manageTeam:true}},
-  {id:'analista', name:'Analista', rank:2, perms:{see:'area_below', edit:'below', assign:'below_area', kpi:'area', requireValidation:true, approveHold:true, manageTeam:false}},
-  {id:'auxiliar', name:'Auxiliar / Assistente', rank:3, perms:{see:'area_peers', edit:'assigned', assign:'self', kpi:'own', requireValidation:false, approveHold:false, manageTeam:false}},
+  {id:'coordenador', name:'Coordenador', rank:2, perms:{see:'area_below', edit:'below', assign:'below_area', kpi:'area', requireValidation:true, approveHold:true, manageTeam:false}},
+  {id:'analista', name:'Analista', rank:3, perms:{see:'area_below', edit:'below', assign:'below_area', kpi:'area', requireValidation:true, approveHold:true, manageTeam:false}},
+  {id:'assistente', name:'Assistente', rank:4, perms:{see:'area_peers', edit:'assigned', assign:'self', kpi:'own', requireValidation:false, approveHold:false, manageTeam:false}},
+  {id:'auxiliar', name:'Auxiliar', rank:5, perms:{see:'area_peers', edit:'assigned', assign:'self', kpi:'own', requireValidation:false, approveHold:false, manageTeam:false}},
 ];
+/* Áreas de uma pessoa (ou convite): lista nova areaIds, com compatibilidade com o campo antigo areaId */
+const areasOf = x => (x?.areaIds && x.areaIds.length) ? x.areaIds : (x?.areaId ? [x.areaId] : []);
+const areaPatch = ids => ({areaIds: ids, areaId: ids[0] || ''});
 const configured = !String(firebaseConfig.apiKey||'').startsWith('COLE');
 
 /* ================= Estado ================= */
@@ -184,7 +189,7 @@ async function acceptInvite(){
     const b = writeBatch(db);
     b.set(doc(db,'teams',teamId,'members',uid), {
       uid, email:S.email, name: data.name || S.profile?.name || S.email,
-      levelId:data.levelId, areaId:data.areaId||'', active:true,
+      levelId:data.levelId, areaId:data.areaId||'', areaIds:data.areaIds||[], active:true,
       joinedAt:serverTimestamp(), addedBy:data.createdBy||'',
     });
     b.update(invRef, {status:'accepted', acceptedAt:serverTimestamp(), acceptedBy:uid});
@@ -422,17 +427,36 @@ function levelSelect(tid, id, value, disabled, onchange){
   return el('select',{id, disabled:disabled||null, onchange:e=>onchange(e.target.value)},
     opts.map(l=>el('option',{value:l.id,selected:l.id===value,disabled:!levelAllowed(tid,l.id)||null,text:`${l.rank} · ${l.name}`})));
 }
-function areaSelect(tid, id, value, disabled, onchange){
-  return el('select',{id, disabled:disabled||null, onchange:e=>onchange(e.target.value)},
-    el('option',{value:'',selected:!value,text:'Sem área'}),
-    teamData(tid).areas.map(a=>el('option',{value:a.id,selected:a.id===value,text:a.name})));
+const areaNames = (tid, ids) => ids.map(id=>areaName(tid,id)).filter(Boolean).join(', ');
+/* Fecha a lista de áreas ao clicar fora dela (a lista fica aberta enquanto se marcam várias áreas) */
+document.addEventListener('click', e => {
+  let changed = false;
+  for (const k of Object.keys(S.ui)) if (k.startsWith('areas-') && S.ui[k].open){
+    const id = k.slice(6);
+    if (!e.target.closest(`[data-areas="${id}"]`) && !e.target.closest(`[data-areas-btn="${id}"]`)){ S.ui[k].open = false; changed = true; }
+  }
+  if (changed) render();
+});
+/* Escolha de uma ou mais áreas: mostra as escolhidas e abre a lista para marcar/desmarcar */
+function areasPicker(tid, id, value, onchange){
+  const st = S.ui['areas-'+id] = S.ui['areas-'+id] || {open:false};
+  const areas = teamData(tid).areas;
+  const toggle = aid => onchange(value.includes(aid) ? value.filter(x=>x!==aid) : [...value, aid]);
+  return el('div',{class:'picker'},
+    el('button',{type:'button',id,class:'areas-btn','data-areas-btn':id,'aria-expanded':String(st.open),onclick:()=>{ st.open=!st.open; render(); }},
+      value.length ? areaNames(tid, value) : 'Sem área', el('span',{class:'caret',text:'▾'})),
+    st.open ? el('div',{class:'picker-list','data-areas':id},
+      areas.length ? areas.map(a=>el('label',{class:'picker-opt'}, el('input',{type:'checkbox',checked:value.includes(a.id),onchange:()=>toggle(a.id)}), el('span',{text:a.name})))
+        : el('div',{class:'picker-empty',text:'Cadastre as áreas mais abaixo, em “Áreas”.'}),
+      el('button',{type:'button',class:'btn sm',style:'margin:4px',onclick:()=>{ st.open=false; render(); }},'Pronto')) : null);
 }
 function peopleSection(tid, manage){
   const D = teamData(tid);
   const ui = S.ui[tid] = S.ui[tid] || {};
   const allowedLevels = D.levels.filter(l=>levelAllowed(tid,l.id));
   const defLevel = allowedLevels[allowedLevels.length-1]?.id || '';
-  ui.inv = ui.inv || {email:'', name:'', levelId:defLevel, areaId:''};
+  ui.inv = ui.inv || {email:'', name:'', levelId:defLevel, areaIds:[]};
+  ui.inv.areaIds = ui.inv.areaIds || [];
   if (!allowedLevels.some(l=>l.id===ui.inv.levelId)) ui.inv.levelId = defLevel;
   if (manage) ensureDirectory();
   const lq = (ui.listQ||'').trim().toLowerCase();
@@ -447,7 +471,7 @@ function peopleSection(tid, manage){
         onChange:(email,u)=>{ ui.inv.email = email; if (u) ui.inv.name = u.name||''; }})),
     ui.inv.email && !pickable.some(u=>u.email===ui.inv.email) ? el('label',{class:'field'}, el('span',{},'Nome (opcional)'), el('input',{id:`inv-name-${tid}`,value:ui.inv.name,oninput:e=>ui.inv.name=e.target.value})) : null,
     el('label',{class:'field'}, el('span',{},'Nível'), levelSelect(tid, `inv-level-${tid}`, ui.inv.levelId, false, v=>ui.inv.levelId=v)),
-    el('label',{class:'field'}, el('span',{},'Área'), areaSelect(tid, `inv-area-${tid}`, ui.inv.areaId, false, v=>ui.inv.areaId=v)),
+    el('div',{class:'field'}, el('span',{},'Áreas'), areasPicker(tid, `inv-area-${tid}`, ui.inv.areaIds, v=>{ ui.inv.areaIds=v; render(); })),
     el('div',{class:'actions'}, el('button',{class:'btn primary',type:'button',onclick:()=>invite(tid)},'Adicionar ao time'))) : null;
   const memberRow = m => {
     const lvl = levelById(tid, m.levelId);
@@ -459,8 +483,8 @@ function peopleSection(tid, manage){
       el('div',{class:'grow'}, el('div',{class:'nm',text:(m.name||m.email)+(isMe?' (você)':'')}), el('div',{class:'sub',text:`${m.email} · desde ${fmtDate(m.joinedAt)}`})),
       editable && !isMe ? levelSelect(tid, `lv-${m.uid}`, m.levelId, false, v=>run(()=>updateDoc(doc(db,'teams',tid,'members',m.uid),{levelId:v}),'Nível atualizado'))
         : el('span',{class:'role'+(lvl?.rank===1?' r1':''),text:lvl?.name||'Nível removido'}),
-      editable ? areaSelect(tid, `ar-${m.uid}`, m.areaId, false, v=>run(()=>updateDoc(doc(db,'teams',tid,'members',m.uid),{areaId:v}),'Área atualizada'))
-        : el('span',{class:'pill',text:areaName(tid,m.areaId)||'Sem área'}),
+      editable ? el('div',{style:'min-width:180px;max-width:260px'}, areasPicker(tid, `ar-${m.uid}`, areasOf(m), v=>run(()=>updateDoc(doc(db,'teams',tid,'members',m.uid), areaPatch(v)),'Áreas atualizadas')))
+        : el('span',{class:'pill',text:areaNames(tid, areasOf(m))||'Sem área'}),
       el('span',{class:'pill '+(m.active?'ok':'bad'),text:m.active?'Ativo':'Desativado'}),
       editable && !isMe ? (confirming
         ? [el('button',{class:'btn danger solid sm',type:'button',onclick:()=>{ ui.rm=null; removeMember(tid, m); }},'Remover'),
@@ -472,7 +496,7 @@ function peopleSection(tid, manage){
     el('span',{class:'who',text:initials(i.name||i.email)}),
     el('div',{class:'grow'}, el('div',{class:'nm',text:i.name||i.email}), el('div',{class:'sub',text:`${i.email} · convidado em ${fmtDate(i.createdAt)}`})),
     el('span',{class:'role',text:levelById(tid,i.levelId)?.name||'—'}),
-    el('span',{class:'pill',text:areaName(tid,i.areaId)||'Sem área'}),
+    el('span',{class:'pill',text:areaNames(tid, areasOf(i))||'Sem área'}),
     el('span',{class:'pill warn',text:'Aguardando login'}),
     manage && levelAllowed(tid, i.levelId) ? el('button',{class:'btn ghost sm',type:'button',onclick:()=>cancelInvite(tid, i.id)},'Cancelar convite') : null);
   return el('div',{class:'section'},
@@ -496,11 +520,11 @@ async function invite(tid){
   }catch(e){ toast('Esse e-mail já está em outro time. Peça para o líder de lá remover a pessoa primeiro.'); return; }
   const ok = await run(async()=>{
     const b = writeBatch(db);
-    b.set(doc(db,'teams',tid,'invites',email), {email, name:ui.inv.name.trim(), levelId:ui.inv.levelId, areaId:ui.inv.areaId||'', status:'pending', createdBy:S.user.uid, createdAt:serverTimestamp()});
+    b.set(doc(db,'teams',tid,'invites',email), {email, name:ui.inv.name.trim(), levelId:ui.inv.levelId, ...areaPatch(ui.inv.areaIds||[]), status:'pending', createdBy:S.user.uid, createdAt:serverTimestamp()});
     b.set(doc(db,'inviteIndex',email), {teamId:tid, at:serverTimestamp()});
     await b.commit();
   }, 'Pessoa adicionada. Ela entra no time no próximo acesso.');
-  if (ok){ ui.inv = {email:'', name:'', levelId:ui.inv.levelId, areaId:ui.inv.areaId}; delete S.ui[`pick-inv-email-${tid}`]; render(); }
+  if (ok){ ui.inv = {email:'', name:'', levelId:ui.inv.levelId, areaIds:ui.inv.areaIds}; delete S.ui[`pick-inv-email-${tid}`]; render(); }
 }
 async function cancelInvite(tid, email){
   await run(async()=>{
@@ -532,7 +556,7 @@ function areasSection(tid, manage){
       el('input',{id:`new-area-${tid}`,value:ui.newArea||'',placeholder:'Ex.: Inteligência Comercial',style:'flex:1;min-width:200px;height:36px;border:1px solid var(--line);border-radius:8px;padding:0 10px;background:var(--surface)',oninput:e=>ui.newArea=e.target.value,onkeydown:e=>{ if(e.key==='Enter') add(); }}),
       el('button',{class:'btn primary',type:'button',onclick:add},'Adicionar área')) : null,
     D.areas.length ? el('div',{class:'rows'}, D.areas.map(a=>{
-      const used = D.members.filter(m=>m.areaId===a.id).length + D.invites.filter(i=>i.areaId===a.id && i.status==='pending').length;
+      const used = D.members.filter(m=>areasOf(m).includes(a.id)).length + D.invites.filter(i=>areasOf(i).includes(a.id) && i.status==='pending').length;
       return el('div',{class:'row'},
         ui.editArea===a.id
           ? el('input',{id:`ea-${a.id}`,value:a.name,style:'flex:1;height:32px;border:1px solid var(--accent);border-radius:7px;padding:0 8px;background:var(--surface)',onkeydown:e=>{ if(e.key==='Enter') e.target.blur(); if(e.key==='Escape'){ ui.editArea=null; render(); } },onblur:e=>{ const v=e.target.value.trim(); ui.editArea=null; if (v && v!==a.name) run(()=>updateDoc(doc(db,'teams',tid,'areas',a.id),{name:v}),'Área renomeada'); else render(); }})
@@ -567,7 +591,24 @@ function levelsSection(tid, manage){
     const perms = {...(base?.perms||DEFAULT_LEVELS[2].perms), manageTeam:false};
     if (await run(()=>setDoc(doc(db,'teams',tid,'levels',id), {name, rank, perms, createdAt:serverTimestamp()}), 'Nível criado')){ ui.newLevel=''; ui.newRank=''; render(); }
   };
+  const ids = new Set(D.levels.map(l=>l.id));
+  const oldDefault = manage && myRank(tid) <= 1 && ids.has('lider') && ids.has('analista') && ids.has('auxiliar') && !ids.has('coordenador') && !ids.has('assistente');
+  const upgrade = async () => {
+    const C = DEFAULT_LEVELS.find(l=>l.id==='coordenador'), A = DEFAULT_LEVELS.find(l=>l.id==='assistente');
+    const aux = D.levels.find(l=>l.id==='auxiliar');
+    await run(async()=>{
+      const b = writeBatch(db);
+      b.set(doc(db,'teams',tid,'levels','coordenador'), {name:C.name, rank:2, perms:C.perms, createdAt:serverTimestamp()});
+      b.update(doc(db,'teams',tid,'levels','analista'), {rank:3});
+      b.set(doc(db,'teams',tid,'levels','assistente'), {name:A.name, rank:4, perms:{...(aux?.perms||A.perms)}, createdAt:serverTimestamp()});
+      b.update(doc(db,'teams',tid,'levels','auxiliar'), {rank:5, name: /assistente/i.test(aux?.name||'') ? 'Auxiliar' : (aux?.name||'Auxiliar')});
+      await b.commit();
+    }, 'Níveis atualizados: Coordenador e Assistente criados');
+  };
   return el('div',{class:'section'},
+    oldDefault ? el('div',{class:'note warn',style:'display:flex;gap:10px;align-items:center;flex-wrap:wrap'},
+      el('span',{style:'flex:1;min-width:240px',text:'Estrutura sugerida: Líder (1), Coordenador (2), Analista (3), Assistente (4) e Auxiliar (5). O Coordenador pode cuidar de várias áreas. Quem hoje é “Auxiliar / Assistente” continua como Auxiliar; mude para Assistente quem for o caso.'}),
+      el('button',{class:'btn primary sm',type:'button',onclick:upgrade},'Aplicar estrutura sugerida')) : null,
     el('header',{}, el('h2',{text:'Níveis e permissões'}),
       el('p',{text:'Ordem 1 é o nível mais alto. Quem gerencia o time só cadastra e edita níveis iguais ou abaixo do seu. Estas permissões definem o que cada pessoa vê, altera e atribui no quadro.'})),
     el('div',{class:'matrix-wrap'}, el('table',{class:'matrix'},
@@ -577,7 +618,7 @@ function levelsSection(tid, manage){
       el('label',{class:'field'}, el('span',{},'Novo nível'), el('input',{id:`new-level-${tid}`,value:ui.newLevel||'',placeholder:'Ex.: Coordenador',oninput:e=>ui.newLevel=e.target.value})),
       el('label',{class:'field'}, el('span',{},'Ordem'), el('input',{id:`new-rank-${tid}`,type:'number',min:String(S.isAdmin?1:mine),value:ui.newRank||'',placeholder:'Ex.: 2',oninput:e=>ui.newRank=e.target.value})),
       el('div',{class:'actions'}, el('button',{class:'btn primary',type:'button',onclick:addLevel},'Criar nível')),
-      el('div',{class:'note',style:'grid-column:1/-1',text:'Ao inserir um nível no meio (por exemplo, Coordenador com ordem 2), ajuste a ordem dos níveis abaixo dele (Analista para 3, Auxiliar para 4). O novo nível começa com as permissões do nível logo acima, sem “Gerenciar time”.'})) : null);
+      el('div',{class:'note',style:'grid-column:1/-1',text:'Ao inserir um nível no meio, ajuste a ordem dos níveis abaixo dele. O novo nível começa com as permissões do nível logo acima, sem “Gerenciar time”.'})) : null);
 }
 
 /* ---------- Administração ---------- */
@@ -595,7 +636,7 @@ function adminTeamsView(){
       const b = writeBatch(db);
       b.set(doc(db,'teams',id), {name, leaderEmail:email, createdAt:serverTimestamp(), createdBy:S.user.uid});
       DEFAULT_LEVELS.forEach(l => b.set(doc(db,'teams',id,'levels',l.id), {name:l.name, rank:l.rank, perms:l.perms, createdAt:serverTimestamp()}));
-      b.set(doc(db,'teams',id,'invites',email), {email, name:ui.leaderName.trim(), levelId:'lider', areaId:'', status:'pending', createdBy:S.user.uid, createdAt:serverTimestamp()});
+      b.set(doc(db,'teams',id,'invites',email), {email, name:ui.leaderName.trim(), levelId:'lider', areaId:'', areaIds:[], status:'pending', createdBy:S.user.uid, createdAt:serverTimestamp()});
       b.set(doc(db,'inviteIndex',email), {teamId:id, at:serverTimestamp()});
       await b.commit();
     }, email===S.email ? 'Time criado. Você é o líder.' : 'Time criado. O líder entra no time no próximo acesso.');
@@ -750,7 +791,7 @@ function profileView(){
       el('div',{class:'actions'}, el('button',{class:'btn primary',type:'button',onclick:saveName},'Salvar nome'),
         el('button',{class:'btn',type:'button',onclick:()=>run(()=>sendPasswordResetEmail(auth, S.email),'Enviamos um link para trocar a senha.')},'Trocar senha'))),
     el('div',{class:'note'},
-      S.membership ? `Time ${teamData(S.membership.teamId).team?.name||''} · ${lvl?.name||''}${S.membership.areaId?` · ${areaName(S.membership.teamId,S.membership.areaId)}`:''}` : 'Você ainda não faz parte de um time.',
+      S.membership ? `Time ${teamData(S.membership.teamId).team?.name||''} · ${lvl?.name||''}${areasOf(S.membership).length?` · ${areaNames(S.membership.teamId, areasOf(S.membership))}`:''}` : 'Você ainda não faz parte de um time.',
       S.isAdmin ? ' · Administrador do sistema' : ''));
 }
 

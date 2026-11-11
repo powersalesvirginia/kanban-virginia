@@ -39,16 +39,18 @@ service cloud.firestore {
     function managesATeam() { return userActive() && exists(userPath()) && myTeamId() != '' && canManage(myTeamId()); }
     // ---------- Quadro: quem pode alterar um cartão (permissão "Altera" do nível) ----------
     function memberOf(t, uid) { return get(/databases/$(database)/documents/teams/$(t)/members/$(uid)).data; }
-    function myAreaId(t) { return get(memberPath(t)).data.get('areaId', ''); }
+    // áreas de uma pessoa: lista areaIds (várias áreas) + o campo antigo areaId
+    function areasOf(m) { return m.get('areaIds', []).concat([m.get('areaId', '')]).removeAll(['']); }
+    function myAreas(t) { return areasOf(get(memberPath(t)).data); }
     function canEditCard(t, c) {
       return isAdmin() || myLevel(t).perms.edit == 'all'
         || c.get('assigneeId', '') == request.auth.uid
         || (myLevel(t).perms.edit == 'below' && (
-             (c.get('assigneeId', '') == '' && (c.get('createdBy', '') == request.auth.uid || c.get('area', '') == myAreaId(t)))
+             (c.get('assigneeId', '') == '' && (c.get('createdBy', '') == request.auth.uid || (c.get('area', '') != '' && c.area in myAreas(t))))
              || (c.get('assigneeId', '') != ''
                  && exists(/databases/$(database)/documents/teams/$(t)/members/$(c.assigneeId))
                  && levelOf(t, memberOf(t, c.assigneeId).levelId).rank > myLevel(t).rank
-                 && memberOf(t, c.assigneeId).get('areaId', '') == myAreaId(t))));
+                 && areasOf(memberOf(t, c.assigneeId)).hasAny(myAreas(t)))));
     }
     // quem tem um papel no cartão sem ser o responsável: validador, quem aprova a pausa, quem repassou a atividade
     function hasCardRole(c) {
@@ -193,6 +195,7 @@ service cloud.firestore {
           && request.resource.data.email == myEmail()
           && request.resource.data.levelId == get(invitePath(t)).data.levelId
           && request.resource.data.areaId == get(invitePath(t)).data.areaId
+          && request.resource.data.get('areaIds', []) == get(invitePath(t)).data.get('areaIds', [])
           && request.resource.data.active == true;
 
         // (b) quem gerencia adiciona diretamente

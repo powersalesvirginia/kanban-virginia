@@ -27,6 +27,8 @@
   <span class="seg-sep" aria-hidden="true"></span>
   <span class="vb-label" id="vbLabel">Visualização</span>
   <div id="viewSeg" class="seg" role="group" aria-label="Tipo de visualização"></div>
+  <button id="areaOpen" class="btn sm" type="button" hidden title="Mostrar a barra de áreas">Áreas ›</button>
+  <select id="areaSel" class="flt" aria-label="Área" hidden></select>
   <select id="sectorArea" class="flt" aria-label="Área do setor" hidden></select>
   <select id="kpiPeriod" class="flt" aria-label="Período dos indicadores" hidden></select>
   <label id="viewAsWrap" class="viewas" for="viewAsSel" hidden><span class="vb-label">Ver como</span><select id="viewAsSel" class="flt"></select></label>
@@ -38,7 +40,10 @@
   </div>
 </div>
 <div id="banner" class="banner" hidden></div>
-<main id="board" class="board" aria-label="Quadro"></main>
+<div class="workspace">
+  <aside id="areaBar" class="area-bar" hidden aria-label="Áreas"></aside>
+  <main id="board" class="board" aria-label="Quadro"></main>
+</div>
 <div id="modalRoot"></div>
 <div id="toast" class="toast" hidden></div>
 

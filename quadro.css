@@ -403,3 +403,21 @@ select.flt{max-width:190px;text-overflow:ellipsis}
 .center-msg{margin:auto;max-width:460px;text-align:center;display:flex;flex-direction:column;gap:12px;align-items:center;padding:24px}
 .center-msg h2{font-family:var(--f-display);margin:0}
 .center-msg p{color:var(--muted);margin:0;line-height:1.5}
+
+/* barra lateral de áreas */
+.workspace{flex:1;min-height:0;display:flex}
+.workspace > main{flex:1;min-width:0}
+.area-bar{flex:0 0 210px;border-right:1px solid var(--line);background:var(--surface);overflow-y:auto;padding:12px 8px;display:flex;flex-direction:column;gap:2px}
+.ab-head{display:flex;align-items:center;justify-content:space-between;padding:0 6px 8px}
+.ab-head b{font-family:var(--f-display);font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.ab-item{display:flex;align-items:center;gap:8px;border:0;background:transparent;text-align:left;padding:8px 10px;border-radius:8px;font-weight:600;color:var(--ink)}
+.ab-item span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ab-item small{font-family:var(--f-mono);font-size:11px;color:var(--muted);background:var(--card);border:1px solid var(--line);border-radius:10px;padding:0 7px}
+.ab-item:hover{background:var(--card)}
+.ab-item.on{background:var(--accent-soft);color:var(--accent)}
+.ab-note{font-size:11px;color:var(--muted);padding:8px 10px;margin:0;line-height:1.4}
+#areaSel, #areaOpen{display:none}
+.bar-collapsed .area-bar{display:none}
+.bar-collapsed #areaSel{display:inline-block}
+@media (max-width:999px){ .area-bar{display:none} #areaSel{display:inline-block} #areaOpen{display:none!important} }
+@media (min-width:1000px){ .bar-collapsed #areaOpen:not([hidden]){display:inline-flex} }
