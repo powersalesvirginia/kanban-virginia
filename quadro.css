@@ -441,3 +441,8 @@ button.me:hover,button.me[aria-expanded="true"]{border-color:var(--accent)}
 .acct-acts{display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--line);padding-top:12px}
 .acct-acts .btn,.acct-acts a.btn{justify-content:flex-start;text-decoration:none;color:var(--ink);width:100%}
 .acct-acts .btn.logout{color:var(--bad)}
+
+/* logo */
+.brand-logo{height:30px;width:auto;border-radius:6px;display:block;flex:none}
+.auth-logo{height:80px;width:auto;border-radius:12px;align-self:flex-start}
+.brand{align-items:center}
