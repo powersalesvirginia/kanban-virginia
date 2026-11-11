@@ -5,7 +5,8 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, query, where,
   onSnapshot, runTransaction,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig } from "./firebase-config.js";
+import { firebaseConfig } from "./firebase-config.js?v=20261110-2302";
+const APP_VERSION = '10/11 23:02';   // aparece na tela para conferir qual versão está aberta
 
 const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);
@@ -770,6 +771,7 @@ function colEl(col, V){
 
 /* ================= Topo ================= */
 function renderTop(V){
+  const bs = document.querySelector('.brand span'); if (bs) bs.textContent = `versão ${APP_VERSION}`;
   const L = linkedMember();
   $('#teamBtn').hidden = !realLider();
   $('#newCard').hidden = !V || S.readOnly || S.page==='kpi';

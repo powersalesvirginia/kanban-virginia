@@ -421,3 +421,5 @@ select.flt{max-width:190px;text-overflow:ellipsis}
 .bar-collapsed #areaSel{display:inline-block}
 @media (max-width:999px){ .area-bar{display:none} #areaSel{display:inline-block} #areaOpen{display:none!important} }
 @media (min-width:1000px){ .bar-collapsed #areaOpen:not([hidden]){display:inline-flex} }
+
+.brand span{display:inline;font-size:11px}

@@ -8,7 +8,8 @@ import {
   getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection,
   getDocs, onSnapshot, writeBatch, serverTimestamp, query, where,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig } from "./firebase-config.js";
+import { firebaseConfig } from "./firebase-config.js?v=20261110-2302";
+const APP_VERSION = '10/11 23:02';   // aparece na tela para conferir qual versão está aberta
 
 /* ================= Configuração ================= */
 const PERM_OPTIONS = {
@@ -388,6 +389,7 @@ function topBar(){
   return el('header',{class:'top'},
     el('h1',{text:'Kanban Virginia'}),
     t ? el('span',{class:'team',text:`Time ${t.name}`}) : null,
+    el('span',{class:'team',title:'Versão do sistema',text:`versão ${APP_VERSION}`}),
     el('span',{class:'sp'}),
     S.membership && myStatus()==='active' ? el('a',{class:'btn primary sm',href:'./quadro.html',style:'text-decoration:none'},'Abrir quadro') : null,
     el('div',{class:'me'},
