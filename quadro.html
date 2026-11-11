@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Kanban Virginia</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@500;700;800&family=Figtree:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap">
+<link rel="stylesheet" href="quadro.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><h1>Kanban Virginia</h1><span>Atividades &amp; status</span></div>
+  <div class="tools">
+    <button id="newCard" class="btn primary" type="button">+ Nova atividade</button>
+    <button id="autoBtn" class="btn" type="button" hidden>↻ Automações</button>
+    <button id="bellBtn" class="btn bell" type="button" aria-label="Avisos" hidden><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg><span class="bell-count" hidden>0</span></button>
+    <button id="teamBtn" class="btn" type="button" hidden>Configurar</button>
+    <a class="nav-link" href="./index.html" title="Pessoas, áreas, níveis e seu perfil">Cadastros</a>
+    <span id="meChip" class="me" hidden></span>
+    <span id="sync" class="sync"><i></i><b>Conectando…</b></span>
+  </div>
+</header>
+<div class="viewbar" hidden>
+  <div id="pageSeg" class="seg" role="group" aria-label="Modo de exibição"></div>
+  <span class="seg-sep" aria-hidden="true"></span>
+  <span class="vb-label" id="vbLabel">Visualização</span>
+  <div id="viewSeg" class="seg" role="group" aria-label="Tipo de visualização"></div>
+  <select id="sectorArea" class="flt" aria-label="Área do setor" hidden></select>
+  <select id="kpiPeriod" class="flt" aria-label="Período dos indicadores" hidden></select>
+  <label id="viewAsWrap" class="viewas" for="viewAsSel" hidden><span class="vb-label">Ver como</span><select id="viewAsSel" class="flt"></select></label>
+  <div class="vb-filters">
+      <label class="search" id="searchWrap" for="q"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="q" type="search" placeholder="Buscar atividade"></label>
+      <select id="flt" class="flt" aria-label="Filtrar por etiqueta"></select>
+      <select id="fltWho" class="flt" aria-label="Filtrar por responsável"></select>
+      <select id="fltReq" class="flt" aria-label="Filtrar por área solicitante"></select>
+  </div>
+</div>
+<div id="banner" class="banner" hidden></div>
+<main id="board" class="board" aria-label="Quadro"></main>
+<div id="modalRoot"></div>
+<div id="toast" class="toast" hidden></div>
+
+<script type="module" src="quadro.js"></script>
+</body>
+</html>

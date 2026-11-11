@@ -37,6 +37,27 @@ service cloud.firestore {
     function canManage(t) { return isAdmin() || (isMember(t) && myLevel(t).perms.manageTeam == true); }
     // Gerencia algum time (usado para o líder ver as contas disponíveis)
     function managesATeam() { return userActive() && exists(userPath()) && myTeamId() != '' && canManage(myTeamId()); }
+    // ---------- Quadro: quem pode alterar um cartão (permissão "Altera" do nível) ----------
+    function memberOf(t, uid) { return get(/databases/$(database)/documents/teams/$(t)/members/$(uid)).data; }
+    function myAreaId(t) { return get(memberPath(t)).data.get('areaId', ''); }
+    function canEditCard(t, c) {
+      return isAdmin() || myLevel(t).perms.edit == 'all'
+        || c.get('assigneeId', '') == request.auth.uid
+        || (myLevel(t).perms.edit == 'below' && (
+             (c.get('assigneeId', '') == '' && (c.get('createdBy', '') == request.auth.uid || c.get('area', '') == myAreaId(t)))
+             || (c.get('assigneeId', '') != ''
+                 && exists(/databases/$(database)/documents/teams/$(t)/members/$(c.assigneeId))
+                 && levelOf(t, memberOf(t, c.assigneeId).levelId).rank > myLevel(t).rank
+                 && memberOf(t, c.assigneeId).get('areaId', '') == myAreaId(t))));
+    }
+    // quem tem um papel no cartão sem ser o responsável: validador, quem aprova a pausa, quem repassou a atividade
+    function hasCardRole(c) {
+      return c.get('validatorId', '') == request.auth.uid
+        || c.get('assignedBy', '') == request.auth.uid
+        || request.auth.uid in c.get('delegators', [])
+        || (c.get('hold', null) != null && c.hold.get('approverId', '') == request.auth.uid);
+    }
+
     // Quem gerencia só cadastra pessoas em níveis iguais ou abaixo do seu (administrador cadastra qualquer nível)
     function levelAllowed(t, levelId) { return isAdmin() || levelOf(t, levelId).rank >= myLevel(t).rank; }
 
@@ -102,6 +123,49 @@ service cloud.firestore {
       match /areas/{areaId} {
         allow read: if isAdmin() || isMember(t);
         allow write: if canManage(t);
+      }
+
+      // ---------- Quadro ----------
+      // Colunas, etiquetas e áreas solicitantes: todos do time leem; só quem gerencia altera
+      match /columns/{id} { allow read: if isMember(t); allow write: if canManage(t); }
+      match /labels/{id} { allow read: if isMember(t); allow write: if canManage(t); }
+      match /requesters/{id} { allow read: if isMember(t); allow write: if canManage(t); }
+
+      // Cartões: todos do time leem (a tela mostra a cada um só o que o nível permite ver);
+      // alterar depende da permissão "Altera" ou de um papel no cartão
+      match /cards/{cardId} {
+        allow read: if isMember(t);
+        allow create: if isMember(t) && (
+          request.resource.data.createdBy == request.auth.uid
+          || (request.resource.data.get('recurrenceId', '') != ''
+              && exists(/databases/$(database)/documents/teams/$(t)/recurrences/$(request.resource.data.recurrenceId))
+              && get(/databases/$(database)/documents/teams/$(t)/recurrences/$(request.resource.data.recurrenceId)).data.createdBy == request.resource.data.createdBy));
+        allow update: if isMember(t) && (
+          canEditCard(t, resource.data) || hasCardRole(resource.data)
+          || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['commentCount', 'lastCommentAt']));
+        allow delete: if isMember(t) && canEditCard(t, resource.data);
+      }
+
+      match /comments/{id} {
+        allow read: if isMember(t);
+        allow create: if isMember(t) && request.resource.data.by == request.auth.uid;
+        allow update, delete: if isMember(t) && (resource.data.by == request.auth.uid || canManage(t));
+      }
+
+      // Avisos: cada pessoa lê e marca como lidos só os seus; qualquer membro pode avisar outro
+      match /notifications/{id} {
+        allow read: if isMember(t) && resource.data.to == request.auth.uid;
+        allow create: if isMember(t);
+        allow update, delete: if isMember(t) && (resource.data.to == request.auth.uid || canManage(t));
+      }
+
+      // Automações: quem criou (ou quem gerencia) altera; qualquer membro marca a data de geração
+      match /recurrences/{id} {
+        allow read: if isMember(t);
+        allow create: if isMember(t) && request.resource.data.createdBy == request.auth.uid;
+        allow update: if isMember(t) && (resource.data.createdBy == request.auth.uid || canManage(t)
+          || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastGenerated']));
+        allow delete: if isMember(t) && (resource.data.createdBy == request.auth.uid || canManage(t));
       }
 
       match /invites/{email} {
