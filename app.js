@@ -31,7 +31,7 @@ const S = {
   membership:null, inactive:false,
   view:'team', adminTeamId:null,
   teams:{},               // teamId -> {team, levels, areas, members, invites}
-  allTeams:[], teamMembers:{}, admins:[], users:[],
+  allTeams:[], teamMembers:{}, admins:[], users:[], inviteIdx:{},
   authMode:'login', authErr:'', busy:false, pendingName:'', af:{name:'', email:'', pass:''},
   ui:{}, // confirmações e rascunhos de tela
 };
@@ -90,6 +90,9 @@ const levelById = (tid, id) => teamData(tid).levels.find(l=>l.id===id);
 const areaName = (tid, id) => teamData(tid).areas.find(a=>a.id===id)?.name || '';
 const myLevel = () => S.membership ? levelById(S.membership.teamId, S.membership.levelId) : null;
 function canManage(tid){ if (S.isAdmin) return true; const l = myLevel(); return !!(S.membership && S.membership.teamId===tid && l?.perms?.manageTeam); }
+/* Situação da conta: aguardando aprovação, ativa ou inativa. Administrador está sempre liberado. */
+const accountStatus = u => (u?.status === 'active' || u?.status === 'inactive') ? u.status : 'pending';
+const myStatus = () => S.isAdmin ? 'active' : accountStatus(S.profile);
 const myRank = tid => S.isAdmin ? 0 : (S.membership?.teamId===tid ? (myLevel()?.rank ?? 99) : 99);
 const levelAllowed = (tid, levelId) => S.isAdmin || (levelById(tid, levelId)?.rank ?? 0) >= myRank(tid);
 
@@ -104,8 +107,7 @@ if (configured){
       await ensureProfile(u);
       S.isAdmin = (await getDoc(doc(db,'admins',u.uid))).exists();
       S.setupDone = (await getDoc(doc(db,'meta','setup'))).exists();
-      await loadMembership();
-      await acceptInvite();
+      if (myStatus() === 'active'){ await loadMembership(); await acceptInvite(); }
       S.view = S.membership ? 'team' : (S.isAdmin ? 'admin-teams' : 'team');
       startSubscriptions();
     }catch(e){ console.error(e); toast(errText(e)); }
@@ -117,7 +119,7 @@ async function ensureProfile(u){
   const snap = await getDoc(ref);
   if (snap.exists()){ S.profile = snap.data(); return; }
   const name = S.pendingName || u.displayName || S.email.split('@')[0];
-  S.profile = {name, email:S.email, createdAt:serverTimestamp()};
+  S.profile = {name, email:S.email, status:'pending', createdAt:serverTimestamp()};
   await setDoc(ref, S.profile);
 }
 /* O líder "puxa" a pessoa: o convite fica em teams/{time}/invites/{email}, com um apontador em inviteIndex/{email}.
@@ -182,7 +184,20 @@ function subscribeTeam(teamId, withInvites){
   if (withInvites) subs.push(onSnapshot(coll('invites'), s => { t.invites = s.docs.map(d=>({id:d.id, ...d.data()})); render(); }, onErr));
 }
 function startSubscriptions(){
-  subs.push(onSnapshot(doc(db,'users',S.user.uid), s => { if (s.exists()){ S.profile = s.data(); render(); } }));
+  subs.push(onSnapshot(doc(db,'users',S.user.uid), async s => {
+    if (!s.exists()) return;
+    const before = myStatus();
+    S.profile = s.data();
+    const after = myStatus();
+    if (before !== after){
+      // aprovada ou reativada: entra no time (se tiver convite) e carrega tudo; inativada: corta o acesso
+      unsubAll(); S.teams = {}; S.membership = null;
+      if (after === 'active'){ await loadMembership(); await acceptInvite(); toast(before === 'pending' ? 'Seu cadastro foi aprovado.' : 'Sua conta foi reativada.'); }
+      startSubscriptions();
+    }
+    render();
+  }));
+  if (myStatus() !== 'active') return;   // sem aprovação, não carrega nada além do próprio perfil
   if (S.membership) subscribeTeam(S.membership.teamId, true);   // convites só carregam para quem gerencia (as regras bloqueiam os demais)
   if (S.isAdmin){
     subs.push(onSnapshot(collection(db,'teams'), s => {
@@ -195,6 +210,7 @@ function startSubscriptions(){
     }));
     subs.push(onSnapshot(collection(db,'admins'), s => { S.admins = s.docs.map(d=>({id:d.id, ...d.data()})); render(); }));
     subs.push(onSnapshot(collection(db,'users'), s => { S.users = s.docs.map(d=>({id:d.id, ...d.data()})).sort(byName); render(); }));
+    subs.push(onSnapshot(collection(db,'inviteIndex'), s => { S.inviteIdx = Object.fromEntries(s.docs.map(d=>[d.id, d.data().teamId])); render(); }, ()=>{}));
   }
   if (!S.membership){
     // aguardando o líder: quando o convite chegar, entra sozinho
@@ -214,9 +230,11 @@ function render(){
   if (!configured){ root.replaceChildren(notConfigured()); return; }
   if (!S.user){ root.replaceChildren(authView()); restoreFocus(keep); return; }
   if (!S.setupDone && !S.isAdmin){ root.replaceChildren(setupView()); return; }
+  if (myStatus() !== 'active'){ root.replaceChildren(blockedView()); return; }
   const tabs = [];
   if (S.membership || !S.isAdmin) tabs.push(['team','Meu time']);
-  if (S.isAdmin) tabs.push(['admin-teams','Times'], ['admin-admins','Administradores'], ['admin-users','Contas']);
+  const pend = S.isAdmin ? S.users.filter(u=>accountStatus(u)==='pending' && !S.admins.some(a=>a.id===u.id)).length : 0;
+  if (S.isAdmin) tabs.push(['admin-users', pend ? `Contas (${pend})` : 'Contas'], ['admin-teams','Times'], ['admin-admins','Administradores']);
   tabs.push(['profile','Meu perfil']);
   if (!tabs.some(([k])=>k===S.view || (S.view==='admin-team' && k==='admin-teams'))) S.view = tabs[0][0];
   let body;
@@ -276,6 +294,16 @@ function authView(){
       m!=='reset' ? el('button',{class:'link',type:'button',onclick:()=>{S.authMode='reset';S.authErr='';render();}},'Esqueci a senha') : null)));
 }
 
+function blockedView(){
+  const st = myStatus();
+  return el('div',{class:'center'}, el('div',{class:'auth'},
+    el('h1',{text: st === 'inactive' ? 'Conta inativa' : 'Cadastro enviado'}),
+    el('p',{class:'sub',text: st === 'inactive'
+      ? 'Sua conta foi inativada pelo administrador. Se acha que é um engano, fale com ele.'
+      : 'Sua conta foi criada e está aguardando a aprovação do administrador. Assim que ele aprovar, esta tela muda sozinha, sem precisar sair e entrar de novo.'}),
+    el('div',{class:'note'}, 'Conta: ', el('b',{text:S.email})),
+    el('button',{class:'btn ghost',type:'button',onclick:()=>signOut(auth)},'Sair')));
+}
 function setupView(){
   return el('div',{class:'center'}, el('div',{class:'auth'},
     el('h1',{text:'Configuração inicial'}),
@@ -578,18 +606,59 @@ function adminAdminsView(){
       a.id===S.user.uid ? null : el('button',{class:'btn ghost sm',type:'button',onclick:()=>run(()=>deleteDoc(doc(db,'admins',a.id)),'Administrador removido')},'Remover')))));
 }
 function adminUsersView(){
-  const ui = S.ui.users = S.ui.users || {q:''};
-  const teamOf = uid => { const u = S.users.find(x=>x.id===uid); const tid = u?.teamId; return tid && (S.teamMembers[tid]||[]).some(m=>m.uid===uid) ? (S.allTeams.find(t=>t.id===tid)?.name || '') : ''; };
+  const ui = S.ui.users = S.ui.users || {q:'', tab:'pending', confirm:null};
+  const isAdm = u => S.admins.some(a=>a.id===u.id);
+  const teamOf = u => { const tid = u?.teamId; return tid && (S.teamMembers[tid]||[]).some(m=>m.uid===u.id) ? (S.allTeams.find(t=>t.id===tid)?.name || '') : ''; };
+  const invitedTo = u => { const tid = S.inviteIdx[u.email]; return tid ? (S.allTeams.find(t=>t.id===tid)?.name || '') : ''; };
+  const groups = {
+    pending: S.users.filter(u=>!isAdm(u) && accountStatus(u)==='pending'),
+    active: S.users.filter(u=>isAdm(u) || accountStatus(u)==='active'),
+    inactive: S.users.filter(u=>!isAdm(u) && accountStatus(u)==='inactive'),
+  };
   const q = ui.q.trim().toLowerCase();
-  const list = S.users.filter(u => !q || (u.name||'').toLowerCase().includes(q) || (u.email||'').includes(q));
-  return el('div',{class:'section'},
-    el('header',{}, el('h2',{text:`Contas criadas · ${S.users.length}`}), el('p',{text:'Todas as pessoas que criaram conta. Quem está sem time aguarda o líder adicionar o e-mail.'})),
-    el('input',{id:'users-q',type:'search',value:ui.q,placeholder:'Buscar por nome ou e-mail',style:'height:36px;border:1px solid var(--line);border-radius:8px;padding:0 10px;background:var(--surface);max-width:360px',oninput:e=>{ ui.q=e.target.value; render(); }}),
-    list.length ? el('div',{class:'rows'}, list.map(u=>{ const t = teamOf(u.id); return el('div',{class:'row'},
+  const list = groups[ui.tab].filter(u => !q || (u.name||'').toLowerCase().includes(q) || (u.email||'').includes(q));
+  const row = u => {
+    const me = u.id === S.user.uid, adm = isAdm(u), st = accountStatus(u), t = teamOf(u), inv = !t && invitedTo(u);
+    const confirming = ui.confirm === u.id;
+    let actions;
+    if (me) actions = null;
+    else if (adm) actions = el('span',{class:'sub',text:'Para mudar esta conta, remova-a de Administradores primeiro'});
+    else if (confirming) actions = [
+      el('button',{class:'btn danger solid sm',type:'button',onclick:()=>{ ui.confirm=null; deleteAccount(u); }}, st==='pending' ? 'Recusar e excluir' : 'Excluir conta'),
+      el('button',{class:'btn ghost sm',type:'button',onclick:()=>{ ui.confirm=null; render(); }},'Cancelar')];
+    else actions = [
+      st!=='active' ? el('button',{class:'btn primary sm',type:'button',onclick:()=>setStatus(u,'active')}, st==='pending' ? 'Aprovar' : 'Ativar') : null,
+      st==='active' ? el('button',{class:'btn sm',type:'button',onclick:()=>setStatus(u,'inactive')},'Inativar') : null,
+      el('button',{class:'btn ghost sm',type:'button',onclick:()=>{ ui.confirm=u.id; render(); }}, st==='pending' ? 'Recusar' : 'Excluir')];
+    return el('div',{class:'row'},
       el('span',{class:'who',text:initials(u.name||u.email)}),
-      el('div',{class:'grow'}, el('div',{class:'nm',text:u.name||u.email}), el('div',{class:'sub',text:`${u.email} · conta criada em ${fmtDate(u.createdAt)}`})),
-      S.admins.some(a=>a.id===u.id) ? el('span',{class:'role adm',text:'Admin'}) : null,
-      el('span',{class:'pill '+(t?'ok':'warn'),text:t?`Time ${t}`:'Sem time'})); })) : el('div',{class:'empty',text:'Nenhuma conta encontrada.'}));
+      el('div',{class:'grow'}, el('div',{class:'nm',text:(u.name||u.email)+(me?' (você)':'')}), el('div',{class:'sub',text:`${u.email} · conta criada em ${fmtDate(u.createdAt)}`})),
+      adm ? el('span',{class:'role adm',text:'Admin'}) : null,
+      t ? el('span',{class:'pill ok',text:`Time ${t}`}) : inv ? el('span',{class:'pill',text:`Convidada: ${inv}`}) : el('span',{class:'pill warn',text:'Sem time'}),
+      actions);
+  };
+  const tabs = [['pending','Aguardando aprovação'],['active','Ativas'],['inactive','Inativas']];
+  return el('div',{class:'section'},
+    el('header',{}, el('h2',{text:'Contas'}),
+      el('p',{text:'Toda conta nova precisa da sua aprovação antes de acessar o sistema. Depois de aprovada, a pessoa entra no time quando o líder adicionar o e-mail dela (ou na hora, se já tiver sido convidada).'})),
+    el('div',{class:'nav',style:'padding:0;background:transparent'}, tabs.map(([k,t])=>el('button',{type:'button','aria-selected':String(ui.tab===k),onclick:()=>{ ui.tab=k; ui.confirm=null; render(); }}, `${t} · ${groups[k].length}`))),
+    el('input',{id:'users-q',type:'search',value:ui.q,placeholder:'Buscar por nome ou e-mail',style:'height:36px;border:1px solid var(--line);border-radius:8px;padding:0 10px;background:var(--surface);max-width:360px',oninput:e=>{ ui.q=e.target.value; render(); }}),
+    list.length ? el('div',{class:'rows'}, list.map(row)) : el('div',{class:'empty',text: ui.tab==='pending' ? 'Nenhum cadastro aguardando aprovação.' : 'Nenhuma conta aqui.'}),
+    ui.tab!=='pending' ? el('div',{class:'note',text:'Excluir apaga o cadastro e a participação no time. O login (e-mail e senha) continua existindo no Firebase: se a pessoa entrar de novo, ela volta para “Aguardando aprovação”. Para apagar o login de vez, use o console do Firebase em Authentication → Usuários.'}) : null);
+}
+async function setStatus(u, status){
+  await run(()=>updateDoc(doc(db,'users',u.id), {status, statusAt:serverTimestamp(), statusBy:S.user.uid}),
+    status==='active' ? (accountStatus(u)==='pending' ? `${u.name||u.email} aprovado(a)` : 'Conta ativada') : 'Conta inativada');
+}
+async function deleteAccount(u){
+  await run(async()=>{
+    const b = writeBatch(db);
+    if (u.teamId) b.delete(doc(db,'teams',u.teamId,'members',u.id));
+    const idx = await getDoc(doc(db,'inviteIndex',u.email)).catch(()=>null);
+    if (idx?.exists()){ b.delete(doc(db,'teams',idx.data().teamId,'invites',u.email)); b.delete(doc(db,'inviteIndex',u.email)); }
+    b.delete(doc(db,'users',u.id));
+    await b.commit();
+  }, 'Conta excluída');
 }
 function profileView(){
   const ui = S.ui.prof = S.ui.prof || {name:S.profile?.name||''};

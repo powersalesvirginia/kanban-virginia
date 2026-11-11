@@ -4,7 +4,7 @@ rules_version = '2';
 // Estrutura:
 //   admins/{uid}                     administradores do sistema
 //   meta/setup                       marca que o primeiro administrador já foi criado
-//   users/{uid}                      perfil de quem criou conta (nome, e-mail)
+//   users/{uid}                      perfil de quem criou conta (nome, e-mail, status: pending | active | inactive)
 //   teams/{teamId}                   times (nome digitado pelo administrador)
 //     levels/{levelId}               níveis do time (ordem + permissões)
 //     areas/{areaId}                 áreas do time
@@ -20,12 +20,16 @@ service cloud.firestore {
     function myEmail() { return request.auth.token.email.lower(); }
     function isAdmin() { return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
 
+    // Conta aprovada pelo administrador (administrador está sempre liberado)
+    function userPath() { return /databases/$(database)/documents/users/$(request.auth.uid); }
+    function userActive() { return isAdmin() || (exists(userPath()) && get(userPath()).data.get('status', 'pending') == 'active'); }
+
     function memberPath(t) { return /databases/$(database)/documents/teams/$(t)/members/$(request.auth.uid); }
-    function isMember(t) { return signedIn() && exists(memberPath(t)) && get(memberPath(t)).data.active == true; }
+    function isMember(t) { return signedIn() && userActive() && exists(memberPath(t)) && get(memberPath(t)).data.active == true; }
     function levelOf(t, levelId) { return get(/databases/$(database)/documents/teams/$(t)/levels/$(levelId)).data; }
     function myLevel(t) { return levelOf(t, get(memberPath(t)).data.levelId); }
     function invitePath(t) { return /databases/$(database)/documents/teams/$(t)/invites/$(myEmail()); }
-    function hasInvite(t) { return signedIn() && exists(invitePath(t)); }
+    function hasInvite(t) { return signedIn() && userActive() && exists(invitePath(t)); }
 
     // Gerenciar o time = administrador, ou membro ativo cujo nível tem "Gerenciar time"
     function canManage(t) { return isAdmin() || (isMember(t) && myLevel(t).perms.manageTeam == true); }
@@ -52,10 +56,17 @@ service cloud.firestore {
     // ---------- Perfil ----------
     match /users/{uid} {
       allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
-      allow create: if signedIn() && request.auth.uid == uid && request.resource.data.email == myEmail();
-      // a pessoa edita o próprio perfil; teamId só pode apontar para um time em que ela realmente entrou (ou ficar vazio)
+      // toda conta nova nasce aguardando aprovação
+      allow create: if signedIn() && request.auth.uid == uid && request.resource.data.email == myEmail()
+        && request.resource.data.status == 'pending';
+      // o administrador aprova, inativa, reativa e exclui
+      allow update: if isAdmin();
+      allow delete: if isAdmin() && request.auth.uid != uid;
+      // a pessoa edita o próprio perfil, mas não muda a própria situação;
+      // teamId só pode apontar para um time em que ela realmente entrou (ou ficar vazio)
       allow update: if signedIn() && request.auth.uid == uid
         && request.resource.data.email == resource.data.email
+        && request.resource.data.get('status', 'pending') == resource.data.get('status', 'pending')
         && (request.resource.data.get('teamId', '') == resource.data.get('teamId', '')
             || request.resource.data.get('teamId', '') == ''
             || existsAfter(/databases/$(database)/documents/teams/$(request.resource.data.teamId)/members/$(uid)));
@@ -104,7 +115,7 @@ service cloud.firestore {
 
         // (a) a pessoa entra sozinha, desde que exista convite pendente para o e-mail dela,
         //     com exatamente o nível e a área do convite
-        allow create: if signedIn() && request.auth.uid == uid
+        allow create: if signedIn() && request.auth.uid == uid && userActive()
           && exists(invitePath(t))
           && get(invitePath(t)).data.status == 'pending'
           && request.resource.data.uid == uid
