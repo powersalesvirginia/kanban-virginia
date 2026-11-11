@@ -8,8 +8,8 @@ import {
   getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection,
   getDocs, onSnapshot, writeBatch, serverTimestamp, query, where,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig } from "./firebase-config.js?v=20261110-2302";
-const APP_VERSION = '10/11 23:02';   // aparece na tela para conferir qual versão está aberta
+import { firebaseConfig } from "./firebase-config.js?v=20261110-2314";
+const APP_VERSION = '10/11 23:14';   // aparece na tela para conferir qual versão está aberta
 
 /* ================= Configuração ================= */
 const PERM_OPTIONS = {
@@ -443,14 +443,23 @@ document.addEventListener('click', e => {
 function areasPicker(tid, id, value, onchange){
   const st = S.ui['areas-'+id] = S.ui['areas-'+id] || {open:false};
   const areas = teamData(tid).areas;
+  const chosen = value.map(v=>areas.find(a=>a.id===v)).filter(Boolean);
   const toggle = aid => onchange(value.includes(aid) ? value.filter(x=>x!==aid) : [...value, aid]);
-  return el('div',{class:'picker'},
-    el('button',{type:'button',id,class:'areas-btn','data-areas-btn':id,'aria-expanded':String(st.open),onclick:()=>{ st.open=!st.open; render(); }},
-      value.length ? areaNames(tid, value) : 'Sem área', el('span',{class:'caret',text:'▾'})),
-    st.open ? el('div',{class:'picker-list','data-areas':id},
-      areas.length ? areas.map(a=>el('label',{class:'picker-opt'}, el('input',{type:'checkbox',checked:value.includes(a.id),onchange:()=>toggle(a.id)}), el('span',{text:a.name})))
-        : el('div',{class:'picker-empty',text:'Cadastre as áreas mais abaixo, em “Áreas”.'}),
-      el('button',{type:'button',class:'btn sm',style:'margin:4px',onclick:()=>{ st.open=false; render(); }},'Pronto')) : null);
+  return el('div',{class:'picker areas'},
+    el('button',{type:'button',id,class:'areas-btn'+(st.open?' open':''),'data-areas-btn':id,'aria-haspopup':'listbox','aria-expanded':String(st.open),
+        title: chosen.length ? chosen.map(a=>a.name).join(', ') : 'Sem área', onclick:()=>{ st.open=!st.open; render(); }},
+      chosen.length
+        ? el('span',{class:'area-chips'}, chosen.slice(0,2).map(a=>el('span',{class:'area-chip',text:a.name})), chosen.length>2 ? el('span',{class:'area-more',text:`+${chosen.length-2}`}) : null)
+        : el('span',{class:'area-none',text:'Sem área'}),
+      el('span',{class:'caret','aria-hidden':'true',text:'▾'})),
+    st.open ? el('div',{class:'picker-list areas-list','data-areas':id,role:'listbox','aria-multiselectable':'true'},
+      areas.length ? el('div',{class:'areas-opts'}, areas.map(a=>el('label',{class:'area-opt'+(value.includes(a.id)?' on':'')},
+          el('input',{type:'checkbox',checked:value.includes(a.id),onchange:()=>toggle(a.id)}), el('span',{text:a.name}))))
+        : el('div',{class:'picker-empty',text:'Nenhuma área cadastrada. Cadastre em “Áreas”, mais abaixo.'}),
+      el('div',{class:'areas-foot'},
+        el('span',{class:'muted',text: value.length ? `${value.length} selecionada${value.length===1?'':'s'}` : 'Nenhuma selecionada'}),
+        value.length ? el('button',{type:'button',class:'btn ghost sm',onclick:()=>onchange([])},'Limpar') : null,
+        el('button',{type:'button',class:'btn primary sm',onclick:()=>{ st.open=false; render(); }},'Pronto'))) : null);
 }
 function peopleSection(tid, manage){
   const D = teamData(tid);
@@ -480,19 +489,19 @@ function peopleSection(tid, manage){
     const editable = manage && (S.isAdmin || (lvl?.rank ?? 99) >= myRank(tid));
     const isMe = m.uid === S.user.uid;
     const confirming = ui.rm === m.uid;
-    return el('div',{class:'row'},
+    return el('div',{class:'row member'},
       el('span',{class:'who',text:initials(m.name||m.email)}),
       el('div',{class:'grow'}, el('div',{class:'nm',text:(m.name||m.email)+(isMe?' (você)':'')}), el('div',{class:'sub',text:`${m.email} · desde ${fmtDate(m.joinedAt)}`})),
-      editable && !isMe ? levelSelect(tid, `lv-${m.uid}`, m.levelId, false, v=>run(()=>updateDoc(doc(db,'teams',tid,'members',m.uid),{levelId:v}),'Nível atualizado'))
-        : el('span',{class:'role'+(lvl?.rank===1?' r1':''),text:lvl?.name||'Nível removido'}),
-      editable ? el('div',{style:'min-width:180px;max-width:260px'}, areasPicker(tid, `ar-${m.uid}`, areasOf(m), v=>run(()=>updateDoc(doc(db,'teams',tid,'members',m.uid), areaPatch(v)),'Áreas atualizadas')))
-        : el('span',{class:'pill',text:areaNames(tid, areasOf(m))||'Sem área'}),
-      el('span',{class:'pill '+(m.active?'ok':'bad'),text:m.active?'Ativo':'Desativado'}),
-      editable && !isMe ? (confirming
-        ? [el('button',{class:'btn danger solid sm',type:'button',onclick:()=>{ ui.rm=null; removeMember(tid, m); }},'Remover'),
+      el('div',{class:'cell'}, editable && !isMe ? levelSelect(tid, `lv-${m.uid}`, m.levelId, false, v=>run(()=>updateDoc(doc(db,'teams',tid,'members',m.uid),{levelId:v}),'Nível atualizado'))
+        : el('span',{class:'role'+(lvl?.rank===1?' r1':''),text:lvl?.name||'Nível removido'})),
+      el('div',{class:'cell'}, editable ? areasPicker(tid, `ar-${m.uid}`, areasOf(m), v=>run(()=>updateDoc(doc(db,'teams',tid,'members',m.uid), areaPatch(v)),'Áreas atualizadas'))
+        : el('span',{class:'pill',text:areaNames(tid, areasOf(m))||'Sem área'})),
+      el('div',{class:'cell'}, el('span',{class:'pill '+(m.active?'ok':'bad'),text:m.active?'Ativo':'Desativado'})),
+      el('div',{class:'cell acts'}, editable && !isMe ? (confirming
+        ? [el('button',{class:'btn danger solid sm',type:'button',onclick:()=>{ ui.rm=null; removeMember(tid, m); }},'Confirmar'),
            el('button',{class:'btn ghost sm',type:'button',onclick:()=>{ ui.rm=null; render(); }},'Cancelar')]
         : [el('button',{class:'btn sm',type:'button',onclick:()=>run(()=>updateDoc(doc(db,'teams',tid,'members',m.uid),{active:!m.active}), m.active?'Acesso desativado':'Acesso reativado')}, m.active?'Desativar':'Reativar'),
-           el('button',{class:'btn ghost sm',type:'button','aria-label':`Remover ${m.name||m.email}`,onclick:()=>{ ui.rm=m.uid; render(); }},'Remover')]) : null);
+           el('button',{class:'btn ghost sm danger-txt',type:'button','aria-label':`Remover ${m.name||m.email}`,onclick:()=>{ ui.rm=m.uid; render(); }},'Remover')]) : null));
   };
   const inviteRow = i => el('div',{class:'row'},
     el('span',{class:'who',text:initials(i.name||i.email)}),
