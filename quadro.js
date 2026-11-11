@@ -5,8 +5,8 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, query, where,
   onSnapshot, runTransaction,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig } from "./firebase-config.js?v=20261110-2314";
-const APP_VERSION = '10/11 23:14';   // aparece na tela para conferir qual versão está aberta
+import { firebaseConfig } from "./firebase-config.js?v=20261110-2317";
+const APP_VERSION = '10/11 23:17';   // aparece na tela para conferir qual versão está aberta
 
 const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);
@@ -856,15 +856,26 @@ function renderAreaBar(V){
   const count = a => pool.filter(c => !a || cardInArea(c, a)).length;
   const pick = a => { S.areaFilter = a; S.kpiPerson = null; savePrefs(); render(); };
   bar.hidden = false; sel.hidden = false;
-  document.body.classList.toggle('bar-collapsed', !!S.barCollapsed);
+  bar.classList.toggle('collapsed', !!S.barCollapsed);
+  $('#areaOpen').hidden = true;
+  if (S.barCollapsed){
+    // recolhida: faixa estreita no mesmo lugar, sempre visível, para abrir de novo
+    const cur = S.areaFilter ? (choices.find(a=>a.id===S.areaFilter)?.name || 'Todas as áreas') : 'Todas as áreas';
+    const open = () => { S.barCollapsed = false; savePrefs(); render(); };
+    bar.replaceChildren(
+      el('button',{type:'button',class:'icon-btn ab-expand',title:'Mostrar as áreas','aria-label':'Mostrar as áreas',onclick:open},'›'),
+      el('button',{type:'button',class:'ab-rail',title:'Mostrar as áreas',onclick:open}, el('span',{text:'Áreas · '+cur})));
+    sel.replaceChildren(el('option',{value:'',text:'Todas as áreas'}), ...choices.map(a=>el('option',{value:a.id,text:a.name})));
+    sel.value = S.areaFilter || '';
+    return;
+  }
   bar.replaceChildren(
-    el('div',{class:'ab-head'}, el('b',{text:'Áreas'}), el('button',{type:'button',class:'icon-btn',title:'Recolher',onclick:()=>{ S.barCollapsed = true; savePrefs(); render(); }},'‹')),
+    el('div',{class:'ab-head'}, el('b',{text:'Áreas'}), el('button',{type:'button',class:'icon-btn',title:'Recolher a barra','aria-label':'Recolher a barra',onclick:()=>{ S.barCollapsed = true; savePrefs(); render(); }},'‹')),
     el('button',{type:'button',class:'ab-item'+(!S.areaFilter?' on':''),onclick:()=>pick('')}, el('span',{text:'Todas as áreas'}), el('small',{text:String(count(''))})),
     ...choices.map(a=>el('button',{type:'button',class:'ab-item'+(S.areaFilter===a.id?' on':''),onclick:()=>pick(a.id)}, el('span',{text:a.name}), el('small',{text:String(count(a.id))}))),
     el('p',{class:'ab-note',text:'O número mostra as atividades em aberto nesta visualização.'}));
   sel.replaceChildren(el('option',{value:'',text:'Todas as áreas'}), ...choices.map(a=>el('option',{value:a.id,text:a.name})));
   sel.value = S.areaFilter || '';
-  $('#areaOpen').hidden = !S.barCollapsed;
 }
 function render(){
   const b = $('#board');
