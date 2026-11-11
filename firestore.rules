@@ -1,0 +1,135 @@
+rules_version = '2';
+
+// Kanban Virginia — regras de segurança (etapa 1: cadastros)
+// Estrutura:
+//   admins/{uid}                     administradores do sistema
+//   meta/setup                       marca que o primeiro administrador já foi criado
+//   users/{uid}                      perfil de quem criou conta (nome, e-mail)
+//   teams/{teamId}                   times (nome digitado pelo administrador)
+//     levels/{levelId}               níveis do time (ordem + permissões)
+//     areas/{areaId}                 áreas do time
+//     members/{uid}                  quem faz parte do time (nível, área, ativo)
+//     invites/{email}                convites por e-mail (o líder "puxa" a pessoa)
+//   inviteIndex/{email}              apontador: em qual time está o convite deste e-mail
+//   (o time da pessoa fica anotado em users/{uid}.teamId — nenhuma consulta precisa de índice)
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function myEmail() { return request.auth.token.email.lower(); }
+    function isAdmin() { return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
+
+    function memberPath(t) { return /databases/$(database)/documents/teams/$(t)/members/$(request.auth.uid); }
+    function isMember(t) { return signedIn() && exists(memberPath(t)) && get(memberPath(t)).data.active == true; }
+    function levelOf(t, levelId) { return get(/databases/$(database)/documents/teams/$(t)/levels/$(levelId)).data; }
+    function myLevel(t) { return levelOf(t, get(memberPath(t)).data.levelId); }
+    function invitePath(t) { return /databases/$(database)/documents/teams/$(t)/invites/$(myEmail()); }
+    function hasInvite(t) { return signedIn() && exists(invitePath(t)); }
+
+    // Gerenciar o time = administrador, ou membro ativo cujo nível tem "Gerenciar time"
+    function canManage(t) { return isAdmin() || (isMember(t) && myLevel(t).perms.manageTeam == true); }
+    // Quem gerencia só cadastra pessoas em níveis iguais ou abaixo do seu (administrador cadastra qualquer nível)
+    function levelAllowed(t, levelId) { return isAdmin() || levelOf(t, levelId).rank >= myLevel(t).rank; }
+
+    // ---------- Configuração inicial: a primeira conta vira administradora ----------
+    match /meta/setup {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && !exists(/databases/$(database)/documents/meta/setup)
+        && existsAfter(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    match /admins/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow create: if isAdmin()
+        || (signedIn() && request.auth.uid == uid
+            && !exists(/databases/$(database)/documents/meta/setup)
+            && existsAfter(/databases/$(database)/documents/meta/setup));
+      allow delete: if isAdmin() && request.auth.uid != uid;   // ninguém remove a si mesmo
+    }
+
+    // ---------- Perfil ----------
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow create: if signedIn() && request.auth.uid == uid && request.resource.data.email == myEmail();
+      // a pessoa edita o próprio perfil; teamId só pode apontar para um time em que ela realmente entrou (ou ficar vazio)
+      allow update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.email == resource.data.email
+        && (request.resource.data.get('teamId', '') == resource.data.get('teamId', '')
+            || request.resource.data.get('teamId', '') == ''
+            || existsAfter(/databases/$(database)/documents/teams/$(request.resource.data.teamId)/members/$(uid)));
+    }
+
+    // ---------- Apontador de convites ----------
+    match /inviteIndex/{email} {
+      allow read: if signedIn() && (resource == null || isAdmin() || email == myEmail() || canManage(resource.data.teamId));
+      allow create: if signedIn() && request.resource.data.teamId is string && canManage(request.resource.data.teamId);
+      allow update: if signedIn() && canManage(resource.data.teamId) && canManage(request.resource.data.teamId);
+      allow delete: if signedIn() && canManage(resource.data.teamId);
+    }
+
+    // ---------- Times ----------
+    match /teams/{t} {
+      allow read: if isAdmin() || isMember(t) || hasInvite(t);
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin();
+
+      match /levels/{levelId} {
+        allow read: if isAdmin() || isMember(t) || hasInvite(t);
+        allow create, update: if canManage(t) && (isAdmin() || request.resource.data.rank >= myLevel(t).rank);
+        allow delete: if canManage(t) && (isAdmin() || resource.data.rank > myLevel(t).rank);
+      }
+
+      match /areas/{areaId} {
+        allow read: if isAdmin() || isMember(t);
+        allow write: if canManage(t);
+      }
+
+      match /invites/{email} {
+        allow read: if canManage(t) || (signedIn() && email == myEmail());
+        allow create, update: if canManage(t)
+          && request.resource.data.email == email
+          && levelAllowed(t, request.resource.data.levelId);
+        // a própria pessoa marca o convite como aceito ao entrar no time
+        allow update: if signedIn() && email == myEmail()
+          && resource.data.status == 'pending'
+          && request.resource.data.status == 'accepted'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'acceptedAt', 'acceptedBy']);
+        allow delete: if canManage(t);
+      }
+
+      match /members/{uid} {
+        allow read: if isAdmin() || isMember(t) || (signedIn() && request.auth.uid == uid);
+
+        // (a) a pessoa entra sozinha, desde que exista convite pendente para o e-mail dela,
+        //     com exatamente o nível e a área do convite
+        allow create: if signedIn() && request.auth.uid == uid
+          && exists(invitePath(t))
+          && get(invitePath(t)).data.status == 'pending'
+          && request.resource.data.uid == uid
+          && request.resource.data.email == myEmail()
+          && request.resource.data.levelId == get(invitePath(t)).data.levelId
+          && request.resource.data.areaId == get(invitePath(t)).data.areaId
+          && request.resource.data.active == true;
+
+        // (b) quem gerencia adiciona diretamente
+        allow create: if canManage(t) && request.resource.data.uid == uid
+          && levelAllowed(t, request.resource.data.levelId);
+
+        allow update: if canManage(t)
+          && request.resource.data.uid == resource.data.uid
+          && levelAllowed(t, request.resource.data.levelId)
+          && (isAdmin() || levelOf(t, resource.data.levelId).rank >= myLevel(t).rank);
+
+        allow delete: if canManage(t) && request.auth.uid != uid
+          && (isAdmin() || levelOf(t, resource.data.levelId).rank >= myLevel(t).rank);
+
+        // a própria pessoa pode corrigir só o nome exibido
+        allow update: if signedIn() && request.auth.uid == uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name']);
+      }
+    }
+
+  }
+}
