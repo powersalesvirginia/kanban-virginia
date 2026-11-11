@@ -1,12 +1,12 @@
 // Kanban Virginia — quadro de atividades no Firebase (dados por time, permissões pelos níveis)
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, query, where,
   onSnapshot, runTransaction,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig } from "./firebase-config.js?v=20261110-2317";
-const APP_VERSION = '10/11 23:17';   // aparece na tela para conferir qual versão está aberta
+import { firebaseConfig } from "./firebase-config.js?v=20261110-2325";
+const APP_VERSION = '10/11 23:25';   // aparece na tela para conferir qual versão está aberta
 
 const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);
@@ -1659,6 +1659,7 @@ $('#newCard').addEventListener('click', () => { if (!S.columns.length) { toast('
 $('#autoBtn').addEventListener('click', openAuto);
 $('#teamBtn').addEventListener('click', openTeam);
 $('#bellBtn').addEventListener('click', openNotifs);
+$('#logoutBtn').addEventListener('click', async () => { $('#logoutBtn').disabled = true; try{ await signOut(auth); }catch(e){} location.replace('./index.html'); });
 document.addEventListener('click', () => { if (S.menuCol){ S.menuCol=null; render(); } });
 $('#board').addEventListener('wheel', e => {
   const b = e.currentTarget;

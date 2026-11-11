@@ -8,8 +8,8 @@ import {
   getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection,
   getDocs, onSnapshot, writeBatch, serverTimestamp, query, where,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig } from "./firebase-config.js?v=20261110-2317";
-const APP_VERSION = '10/11 23:17';   // aparece na tela para conferir qual versão está aberta
+import { firebaseConfig } from "./firebase-config.js?v=20261110-2325";
+const APP_VERSION = '10/11 23:25';   // aparece na tela para conferir qual versão está aberta
 
 /* ================= Configuração ================= */
 const PERM_OPTIONS = {
