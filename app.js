@@ -93,6 +93,15 @@ function canManage(tid){ if (S.isAdmin) return true; const l = myLevel(); return
 /* Situação da conta: aguardando aprovação, ativa ou inativa. Administrador está sempre liberado. */
 const accountStatus = u => (u?.status === 'active' || u?.status === 'inactive') ? u.status : 'pending';
 const myStatus = () => S.isAdmin ? 'active' : accountStatus(S.profile);
+function availableAccounts(){
+  return S.users.filter(u => {
+    const adm = S.admins.some(a=>a.id===u.id);
+    if (!adm && accountStatus(u) !== 'active') return false;
+    if (S.inviteIdx[u.email]) return false;
+    if (u.teamId && (S.teamMembers[u.teamId]||[]).some(m=>m.uid===u.id)) return false;
+    return true;
+  }).sort(byName);
+}
 const myRank = tid => S.isAdmin ? 0 : (S.membership?.teamId===tid ? (myLevel()?.rank ?? 99) : 99);
 const levelAllowed = (tid, levelId) => S.isAdmin || (levelById(tid, levelId)?.rank ?? 0) >= myRank(tid);
 
@@ -392,7 +401,8 @@ function peopleSection(tid, manage){
   const members = D.members.slice().sort((a,b)=>(levelById(tid,a.levelId)?.rank??99)-(levelById(tid,b.levelId)?.rank??99) || byName(a,b));
   const pending = D.invites.filter(i=>i.status==='pending' && !D.members.some(m=>m.email===i.email && m.active));
   const addForm = manage ? el('div',{class:'form'},
-    el('label',{class:'field'}, el('span',{},'E-mail da pessoa'), el('input',{id:`inv-email-${tid}`,type:'email',value:ui.inv.email,placeholder:'nome@empresa.com.br',oninput:e=>ui.inv.email=e.target.value})),
+    el('label',{class:'field'}, el('span',{},'E-mail da pessoa'), el('input',{id:`inv-email-${tid}`,type:'email',list:S.isAdmin?`acc-${tid}`:null,value:ui.inv.email,placeholder:S.isAdmin?'Digite ou escolha uma conta':'nome@empresa.com.br',oninput:e=>{ ui.inv.email=e.target.value; const u = S.isAdmin && S.users.find(x=>x.email===normEmail(e.target.value)); if (u && !ui.inv.name) ui.inv.name = u.name||''; }}),
+      S.isAdmin ? el('datalist',{id:`acc-${tid}`}, availableAccounts().map(u=>el('option',{value:u.email,label:u.name||u.email}))) : null),
     el('label',{class:'field'}, el('span',{},'Nome (opcional)'), el('input',{id:`inv-name-${tid}`,value:ui.inv.name,oninput:e=>ui.inv.name=e.target.value})),
     el('label',{class:'field'}, el('span',{},'Nível'), levelSelect(tid, `inv-level-${tid}`, ui.inv.levelId, false, v=>ui.inv.levelId=v)),
     el('label',{class:'field'}, el('span',{},'Área'), areaSelect(tid, `inv-area-${tid}`, ui.inv.areaId, false, v=>ui.inv.areaId=v)),
@@ -529,11 +539,11 @@ function levelsSection(tid, manage){
 
 /* ---------- Administração ---------- */
 function adminTeamsView(){
-  const ui = S.ui.admin = S.ui.admin || {name:'', leaderEmail:'', leaderName:''};
+  const ui = S.ui.admin = S.ui.admin || {name:'', leaderEmail:'', leaderName:'', leaderPick:''};
   const createTeam = async () => {
     const name = ui.name.trim(), email = normEmail(ui.leaderEmail);
     if (name.length < 2){ toast('Digite o nome do time.'); return; }
-    if (!validEmail(email)){ toast('Informe o e-mail do líder.'); return; }
+    if (!validEmail(email)){ toast(ui.leaderPick === '__other' ? 'Informe o e-mail do líder.' : 'Escolha o líder do time.'); return; }
     if (S.allTeams.some(t=>t.name.toLowerCase()===name.toLowerCase())){ toast('Já existe um time com esse nome.'); return; }
     let id = slug(name); while (S.allTeams.some(t=>t.id===id)) id += '-2';
     const idx = await getDoc(doc(db,'inviteIndex',email)).catch(()=>null);
@@ -547,7 +557,7 @@ function adminTeamsView(){
       await b.commit();
     }, email===S.email ? 'Time criado. Você é o líder.' : 'Time criado. O líder entra no time no próximo acesso.');
     if (ok){
-      S.ui.admin = {name:'', leaderEmail:'', leaderName:''};
+      S.ui.admin = {name:'', leaderEmail:'', leaderName:'', leaderPick:''};
       if (email === S.email && !S.membership){ await acceptInvite(); if (S.membership){ subscribeTeam(S.membership.teamId, true); } }
       render();
     }
@@ -556,11 +566,21 @@ function adminTeamsView(){
   const leadersOf = tid => { const l = (S.teamMembers[tid]||[]).filter(m=>m.levelId==='lider' && m.active).map(m=>m.name||m.email); return l.length ? l : [(S.allTeams.find(t=>t.id===tid)?.leaderEmail||'') + ' (aguardando o primeiro acesso)']; };
   return [
     el('div',{class:'section'},
-      el('header',{}, el('h2',{text:'Novo time'}), el('p',{text:'Digite o nome do time e o e-mail do líder. O time já nasce com os níveis Líder, Analista e Auxiliar, que o líder pode ajustar.'})),
+      el('header',{}, el('h2',{text:'Novo time'}), el('p',{text:'Digite o nome do time e escolha o líder. A lista mostra as contas aprovadas que ainda não estão em nenhum time; para quem ainda não criou conta, use “Outro e-mail”. O time já nasce com os níveis Líder, Analista e Auxiliar.'})),
       el('div',{class:'form'},
         el('label',{class:'field'}, el('span',{},'Nome do time'), el('input',{id:'nt-name',value:ui.name,placeholder:'Ex.: Sales Ops Paraná',oninput:e=>ui.name=e.target.value})),
-        el('label',{class:'field'}, el('span',{},'E-mail do líder'), el('input',{id:'nt-email',type:'email',value:ui.leaderEmail,placeholder:'lider@empresa.com.br',oninput:e=>ui.leaderEmail=e.target.value})),
-        el('label',{class:'field'}, el('span',{},'Nome do líder (opcional)'), el('input',{id:'nt-lname',value:ui.leaderName,oninput:e=>ui.leaderName=e.target.value})),
+        (()=>{ const avail = availableAccounts();
+          return el('label',{class:'field'}, el('span',{},'Líder'),
+            el('select',{id:'nt-leader',onchange:e=>{
+                const v = e.target.value; ui.leaderPick = v;
+                if (v && v !== '__other'){ const u = S.users.find(x=>x.email===v); ui.leaderEmail = v; ui.leaderName = u?.name || ''; }
+                else { ui.leaderEmail = ''; ui.leaderName = ''; }
+                render(); }},
+              el('option',{value:'',selected:!ui.leaderPick,text: avail.length ? 'Escolha uma conta' : 'Nenhuma conta disponível'}),
+              avail.map(u=>el('option',{value:u.email,selected:ui.leaderPick===u.email,text:`${u.name||u.email} · ${u.email}${u.id===S.user.uid?' (você)':''}`})),
+              el('option',{value:'__other',selected:ui.leaderPick==='__other',text:'Outro e-mail (pessoa ainda sem conta)'}))); })(),
+        ui.leaderPick === '__other' ? el('label',{class:'field'}, el('span',{},'E-mail do líder'), el('input',{id:'nt-email',type:'email',value:ui.leaderEmail,placeholder:'lider@empresa.com.br',oninput:e=>ui.leaderEmail=e.target.value})) : null,
+        ui.leaderPick === '__other' ? el('label',{class:'field'}, el('span',{},'Nome do líder (opcional)'), el('input',{id:'nt-lname',value:ui.leaderName,oninput:e=>ui.leaderName=e.target.value})) : null,
         el('div',{class:'actions'}, el('button',{class:'btn primary',type:'button',onclick:createTeam},'Criar time')))),
     el('div',{class:'section'},
       el('header',{}, el('h2',{text:`Times · ${S.allTeams.length}`})),
