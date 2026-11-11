@@ -165,6 +165,8 @@ button.me:hover,button.me[aria-expanded="true"]{border-color:var(--accent)}
 .acct-acts .btn.logout{color:var(--bad)}
 .top .me{border:1px solid var(--line);border-radius:18px;padding:3px 10px 3px 3px;background:var(--card);height:36px}
 
-/* logo */
-.brand-logo{height:30px;width:auto;border-radius:6px;display:block;flex:none}
-.auth-logo{height:80px;width:auto;border-radius:12px;align-self:flex-start}
+/* logo com fundo transparente: a forma vem da imagem e a cor acompanha o tema (escura no claro, branca no escuro) */
+.brand-logo,.auth-logo{display:block;flex:none;background:var(--ink);
+  -webkit-mask:url(logo-transparente.png) center / contain no-repeat;mask:url(logo-transparente.png) center / contain no-repeat}
+.brand-logo{height:34px;aspect-ratio:1.274}
+.auth-logo{height:84px;aspect-ratio:1.274;align-self:flex-start}

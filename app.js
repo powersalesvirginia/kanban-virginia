@@ -8,8 +8,8 @@ import {
   getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection,
   getDocs, onSnapshot, writeBatch, serverTimestamp, query, where,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig } from "./firebase-config.js?v=20261110-2339";
-const APP_VERSION = '10/11 23:39';   // aparece na tela para conferir qual versão está aberta
+import { firebaseConfig } from "./firebase-config.js?v=20261110-2342";
+const APP_VERSION = '10/11 23:42';   // aparece na tela para conferir qual versão está aberta
 
 /* ================= Configuração ================= */
 const PERM_OPTIONS = {
@@ -345,7 +345,7 @@ function authView(){
   };
   const title = {login:'Entrar', signup:'Criar conta', reset:'Redefinir senha'}[m];
   return el('div',{class:'center'}, el('form',{class:'auth',onsubmit:submit,novalidate:true},
-    el('img',{class:'auth-logo',src:'logo.png',alt:'Virginia Kanban',width:'120',height:'80'}),
+    el('span',{class:'auth-logo',role:'img','aria-label':'Virginia Kanban'}),
     el('p',{class:'sub',text: m==='signup' ? 'Crie sua conta com o e-mail que o seu líder vai usar para te adicionar ao time.' : m==='reset' ? 'Informe seu e-mail para receber o link de redefinição.' : 'Entre com seu e-mail e senha.'}),
     S.authErr ? el('div',{class:'err',role:'alert',text:S.authErr}) : null,
     m==='signup' ? el('label',{class:'field'}, el('span',{},'Nome'), name) : null,
@@ -387,7 +387,7 @@ function topBar(){
   const t = S.membership ? teamData(S.membership.teamId).team : null;
   const lvl = myLevel();
   return el('header',{class:'top'},
-    el('img',{class:'brand-logo',src:'logo.png',alt:'',width:'45',height:'30'}),
+    el('span',{class:'brand-logo',role:'img','aria-label':'Virginia Kanban'}),
     el('h1',{text:'Kanban Virginia'}),
     t ? el('span',{class:'team',text:`Time ${t.name}`}) : null,
     el('span',{class:'team',title:'Versão do sistema',text:`versão ${APP_VERSION}`}),
