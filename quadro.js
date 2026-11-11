@@ -5,8 +5,8 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, query, where,
   onSnapshot, runTransaction,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig } from "./firebase-config.js?v=20261111-0855";
-const APP_VERSION = '11/11 08:55';   // aparece na tela para conferir qual versão está aberta
+import { firebaseConfig } from "./firebase-config.js?v=20261111-0917";
+const APP_VERSION = '11/11 09:17';   // aparece na tela para conferir qual versão está aberta
 
 const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);

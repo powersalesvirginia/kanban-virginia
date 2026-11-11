@@ -8,8 +8,8 @@ import {
   getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection,
   getDocs, onSnapshot, writeBatch, serverTimestamp, query, where,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig } from "./firebase-config.js?v=20261111-0855";
-const APP_VERSION = '11/11 08:55';   // aparece na tela para conferir qual versão está aberta
+import { firebaseConfig } from "./firebase-config.js?v=20261111-0917";
+const APP_VERSION = '11/11 09:17';   // aparece na tela para conferir qual versão está aberta
 
 /* ================= Configuração ================= */
 const PERM_OPTIONS = {
@@ -108,23 +108,23 @@ function availableAccounts(){
     return true;
   }).sort(byName);
 }
-/* Líder (não admin): lista das contas aprovadas e sem time, liberada pelas regras para quem gerencia um time */
+/* Líder (não admin): lista de todas as contas (as de outro time aparecem marcadas), liberada pelas regras para quem gerencia um time */
 function ensureDirectory(){
   if (S.dirSub || S.isAdmin || !S.membership) return;
   S.dirSub = true;
-  subs.push(onSnapshot(query(collection(db,'users'), where('status','==','active'), where('teamId','==','')),
+  subs.push(onSnapshot(collection(db,'users'),
     s => { S.directory = s.docs.map(d=>({id:d.id, ...d.data()})).sort(byName); render(); },
     e => { console.warn('lista de contas', e?.code); S.directory = []; setTimeout(()=>{ S.dirSub = false; render(); }, 15000); }));   // tenta de novo (ex.: regras recém-publicadas)
 }
 const matches = (u, q) => !q || (u.name||'').toLowerCase().includes(q) || (u.email||'').toLowerCase().includes(q);
 /* Campo de busca de contas: digita nome ou e-mail, escolhe na lista; aceita também um e-mail de quem ainda não tem conta */
-function accountPicker({id, accounts, value, onChange, placeholder, allowOther=true}){
+function accountPicker({id, accounts, value, onChange, placeholder, allowOther=true, tagOf=null}){
   const st = S.ui['pick-'+id] = S.ui['pick-'+id] || {q:'', open:false};
   if (value && !st.q) st.q = value;
   if (!value && st.q && !st.open && !validEmail(normEmail(st.q))) st.q = '';
   const q = st.q.trim().toLowerCase();
   const picked = accounts.find(u=>u.email===value);
-  const list = accounts.filter(u=>matches(u,q) || (picked && u.email===value && st.q===value)).slice(0, 8);
+  const list = accounts.filter(u=>matches(u,q) || (picked && u.email===value && st.q===value)).slice(0, 60);
   const typedEmail = normEmail(st.q);
   const showOther = allowOther && validEmail(typedEmail) && !accounts.some(u=>u.email===typedEmail);
   const pick = (email, user) => { st.q = email; st.open = false; onChange(email, user||null); render(); };
@@ -133,12 +133,14 @@ function accountPicker({id, accounts, value, onChange, placeholder, allowOther=t
       role:'combobox', 'aria-expanded':String(st.open), 'aria-controls':id+'-list',
       onfocus:()=>{ if (!st.open){ st.open = true; render(); } },
       oninput:e=>{ st.q = e.target.value; st.open = true; const em = normEmail(e.target.value); const u = accounts.find(x=>x.email===em); onChange(validEmail(em) && (u || allowOther) ? em : '', u||null); render(); },
-      onkeydown:e=>{ if (e.key==='Escape'){ st.open=false; render(); } if (e.key==='Enter'){ e.preventDefault(); if (list.length===1) pick(list[0].email, list[0]); else if (showOther) pick(typedEmail, null); } },
+      onkeydown:e=>{ if (e.key==='Escape'){ st.open=false; render(); } if (e.key==='Enter'){ e.preventDefault(); if (list.length===1 && !(tagOf && tagOf(list[0])?.off)) pick(list[0].email, list[0]); else if (showOther) pick(typedEmail, null); } },
       onblur:()=>setTimeout(()=>{ if (document.activeElement?.id !== id && st.open){ st.open = false; render(); } }, 150)}),
-    picked ? el('small',{class:'picker-hint',text:`${picked.name||picked.email} · conta aprovada`}) : (value && allowOther ? el('small',{class:'picker-hint',text:'Pessoa ainda sem conta: ela entra ao criar a conta com esse e-mail'}) : null),
+    picked ? el('small',{class:'picker-hint',text:`${picked.name||picked.email} · ${accountStatus(picked)==='active'?'conta aprovada':'conta aguardando aprovação do administrador'}`}) : (value && allowOther ? el('small',{class:'picker-hint',text:'Pessoa ainda sem conta: ela entra ao criar a conta com esse e-mail'}) : null),
     st.open ? el('div',{class:'picker-list',id:id+'-list',role:'listbox'},
-      list.map(u=>el('button',{type:'button',role:'option',class:'picker-opt'+(u.email===value?' on':''),onmousedown:e=>e.preventDefault(),onclick:()=>pick(u.email,u)},
-        el('span',{class:'who',text:initials(u.name||u.email)}), el('span',{class:'po-txt'}, el('b',{text:(u.name||u.email)+(u.id===S.user?.uid?' (você)':'')}), el('small',{text:u.email})))),
+      list.map(u=>{ const tg = tagOf ? tagOf(u) : null;
+        return el('button',{type:'button',role:'option',class:'picker-opt'+(u.email===value?' on':'')+(tg?.off?' off':''),disabled:!!tg?.off,'aria-disabled':String(!!tg?.off),onmousedown:e=>e.preventDefault(),onclick:()=>{ if (!tg?.off) pick(u.email,u); }},
+        el('span',{class:'who',text:initials(u.name||u.email)}), el('span',{class:'po-txt'}, el('b',{text:(u.name||u.email)+(u.id===S.user?.uid?' (você)':'')}), el('small',{text:u.email})),
+        tg ? el('span',{class:'po-tag'+(tg.off?' off':''),text:tg.text}) : null); }),
       showOther ? el('button',{type:'button',role:'option',class:'picker-opt other',onmousedown:e=>e.preventDefault(),onclick:()=>pick(typedEmail,null)}, el('span',{class:'po-txt'}, el('b',{text:`Usar ${typedEmail}`}), el('small',{text:'Pessoa ainda sem conta'}))) : null,
       !list.length && !showOther ? el('div',{class:'picker-empty',text: accounts.length ? 'Nenhuma conta encontrada. Para quem ainda não tem conta, digite o e-mail completo.' : (allowOther ? 'Nenhuma conta disponível. Digite o e-mail completo da pessoa.' : 'Nenhuma conta disponível.')}) : null) : null);
 }
@@ -499,10 +501,17 @@ function peopleSection(tid, manage){
   const pendingAll = D.invites.filter(i=>i.status==='pending' && !D.members.some(m=>m.email===i.email && m.active));
   const pending = pendingAll.filter(i=>matches(i, lq));
   const taken = new Set([...D.members.map(m=>m.email), ...pendingAll.map(i=>i.email)]);
-  const pickable = (S.isAdmin ? availableAccounts() : S.directory).filter(u=>!taken.has(u.email));
+  // todas as contas (menos as inativas e quem já está neste time); quem está em outro time aparece marcado e não pode ser escolhido
+  const pickable = (S.isAdmin ? S.users : S.directory).filter(u=>u.email && !taken.has(u.email) && accountStatus(u)!=='inactive').sort(byName);
+  const tagOf = u => {
+    if (u.teamId && u.teamId !== tid) return {text: S.isAdmin && S.teams[u.teamId]?.name ? `Em ${S.teams[u.teamId].name}` : 'Em outro time', off:true};
+    if (S.isAdmin && S.inviteIdx[u.email] && S.inviteIdx[u.email] !== tid) return {text:'Convidada para outro time', off:true};
+    if (accountStatus(u) === 'pending') return {text:'Aguardando aprovação'};
+    return null;
+  };
   const addForm = manage ? el('div',{class:'form'},
     el('div',{class:'field'}, el('span',{},'Pessoa'),
-      accountPicker({id:`inv-email-${tid}`, accounts:pickable, value:ui.inv.email, placeholder:'Busque pelo nome ou e-mail',
+      accountPicker({id:`inv-email-${tid}`, accounts:pickable, value:ui.inv.email, placeholder:'Busque pelo nome ou e-mail', tagOf,
         onChange:(email,u)=>{ ui.inv.email = email; if (u) ui.inv.name = u.name||''; }})),
     ui.inv.email && !pickable.some(u=>u.email===ui.inv.email) ? el('label',{class:'field'}, el('span',{},'Nome (opcional)'), el('input',{id:`inv-name-${tid}`,value:ui.inv.name,oninput:e=>ui.inv.name=e.target.value})) : null,
     el('label',{class:'field'}, el('span',{},'Nível'), levelSelect(tid, `inv-level-${tid}`, ui.inv.levelId, false, v=>ui.inv.levelId=v)),

@@ -83,8 +83,8 @@ service cloud.firestore {
     // ---------- Perfil ----------
     match /users/{uid} {
       allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
-      // quem gerencia um time vê só as contas aprovadas que ainda não estão em nenhum time (para adicionar ao time)
-      allow list: if managesATeam() && resource.data.status == 'active' && resource.data.teamId == '';
+      // quem gerencia um time pode listar as contas (nome, e-mail, situação e time) para buscar e adicionar pessoas ao time
+      allow list: if managesATeam();
       // toda conta nova nasce aguardando aprovação e sem time
       allow create: if signedIn() && request.auth.uid == uid && request.resource.data.email == myEmail()
         && request.resource.data.status == 'pending'
