@@ -460,3 +460,11 @@ button.me:hover,button.me[aria-expanded="true"]{border-color:var(--accent)}
 .np-item.team.unread .np-txt>span{font-weight:500}
 #bellBtn.team-dot::after{content:'';position:absolute;top:-2px;right:-2px;width:8px;height:8px;border-radius:50%;background:var(--muted);border:2px solid var(--card)}
 .bell-count.soft{background:var(--muted)}
+
+/* Coluna "Arquivadas": oculta como faixa estreita */
+.col-rail{flex:none;width:40px;align-self:stretch;max-height:320px;display:flex;flex-direction:column;align-items:center;gap:10px;padding:12px 0;border:1px dashed var(--line);border-radius:12px;background:transparent;color:var(--muted);cursor:pointer;font:inherit}
+.col-rail:hover{background:var(--surface);color:var(--ink)}
+.col-rail .cr-arrow{font-size:16px;line-height:1}
+.col-rail .cr-txt{writing-mode:vertical-rl;transform:rotate(180deg);font-size:12px;font-weight:600;letter-spacing:.03em;white-space:nowrap}
+.col.archive{opacity:.92}
+.col-note{margin:0 12px 6px;font-size:11px;color:var(--muted)}

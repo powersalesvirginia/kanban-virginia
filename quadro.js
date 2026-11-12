@@ -5,8 +5,8 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, query, where,
   onSnapshot, runTransaction,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig } from "./firebase-config.js?v=20261112-1044";
-const APP_VERSION = '12/11 10:44';   // aparece na tela para conferir qual versão está aberta
+import { firebaseConfig } from "./firebase-config.js?v=20261112-1049";
+const APP_VERSION = '12/11 10:49';   // aparece na tela para conferir qual versão está aberta
 
 const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);
@@ -67,7 +67,9 @@ const DEFAULT_COLS = [
   {title:'Aguardando', color:'#5b6f7e', done:false, validation:false, waiting:true},
   {title:'Validação', color:'#b8860b', done:false, validation:true},
   {title:'Concluído', color:'#2f7d4f', done:true, validation:false},
+  {title:'Arquivadas', color:'#8a96a3', done:true, validation:false, archive:true},
 ];
+const ARCHIVE_DAYS = 45;   // concluídas há 45 dias ou mais vão para a coluna oculta "Arquivadas"
 const COLLS = ['columns','cards','requesters','notifications','labels','recurrences'];
 const LOCAL_KEY = 'kanban-virginia-v3';
 const PREF_KEY = 'kanban-virginia-view';
@@ -110,7 +112,8 @@ const sortOrd = (a,b) => (a.order??0)-(b.order??0);
 const byName = (a,b) => (a.name||'').localeCompare(b.name||'','pt-BR');
 const colById = id => S.columns.find(c=>c.id===id);
 const colsSorted = () => S.columns.slice().sort(sortOrd);
-const doneCol = () => colsSorted().find(c=>c.done);
+const doneCol = () => colsSorted().find(c=>c.done && !c.archive);
+const archiveCol = () => colsSorted().find(c=>c.archive);
 const validationCol = () => colsSorted().find(c=>c.validation);
 const waitingCol = () => colsSorted().find(c=>c.waiting);
 const workCols = () => colsSorted().filter(c=>!c.done && !c.validation && !c.waiting);
@@ -643,7 +646,29 @@ async function markAllRead(V, list){
 }
 /* Prazos: atraso avisa responsável + superiores; prazo próximo avisa o responsável. Ids fixos = nunca duplica. */
 let deadlineTimer = null;
-function scheduleChecks(){ clearTimeout(deadlineTimer); deadlineTimer = setTimeout(()=>{ checkDeadlines(); runRecurrences(); }, 1500); }
+function scheduleChecks(){ clearTimeout(deadlineTimer); deadlineTimer = setTimeout(()=>{ ensureArchiveCol(); archiveOld(); checkDeadlines(); runRecurrences(); }, 1500); }
+/* Quadros criados antes da coluna "Arquivadas": quem gerencia cria a coluna (uma vez) */
+let archiveColAsked = false;
+async function ensureArchiveCol(){
+  if (archiveColAsked || archiveCol() || !S.columns.length || !canManage(linkedMember())) return;
+  archiveColAsked = true;
+  const last = colsSorted().slice(-1)[0];
+  await saveCol({id:uid('col_'), ...DEFAULT_COLS.find(c=>c.archive), order:(last?.order??0)+1000});
+}
+/* Concluídas há 45 dias ou mais vão para "Arquivadas" (sem gerar avisos). Cada pessoa move as que pode alterar. */
+function archiveOld(){
+  const ac = archiveCol(); const V = linkedMember();
+  if (!ac || !V || S.readOnly) return;
+  const limit = Date.now() - ARCHIVE_DAYS*86400000;
+  let o = nextOrder(ac.id);
+  for (const c of S.cards){
+    const col = colById(c.columnId);
+    if (!col?.done || col.archive) continue;
+    const t = Date.parse(c.doneAt || c.updatedAt || '');
+    if (!isFinite(t) || t > limit || !canEdit(c, V)) continue;
+    put('cards', {...c, columnId:ac.id, order:o, archivedAt:nowISO()}); o += 1000;
+  }
+}
 async function checkDeadlines(){
   const L = linkedMember();
   if (S.store !== 'db' || !L || S.readOnly) return;
@@ -828,6 +853,13 @@ function cardEl(card, V){
   }
   return node;
 }
+/* Coluna "Arquivadas" oculta: só uma faixa estreita com a contagem, que abre a coluna */
+function archiveRail(col, V){
+  const n = boardCards(V).filter(c=>c.columnId===col.id && passesFilters(c)).length;
+  const open = () => { S.showArchive = true; savePrefs(); render(); };
+  return el('button',{type:'button',class:'col-rail','data-col':col.id,title:`Concluídas há ${ARCHIVE_DAYS} dias ou mais. Clique para mostrar.`,'aria-label':`Mostrar ${col.title} (${n})`,onclick:open},
+    el('span',{class:'cr-arrow',text:'‹'}), el('span',{class:'cr-txt',text:`${col.title} · ${n}`}));
+}
 function colEl(col, V){
   const cards = filteredCards(col.id, V);
   const manage = canManage(V);
@@ -836,9 +868,10 @@ function colEl(col, V){
     S.editCol===col.id
       ? el('input',{id:'rename-'+col.id,value:col.title,'aria-label':'Nome da coluna',onkeydown:e=>{ if(e.key==='Enter') e.target.blur(); if(e.key==='Escape'){S.editCol=null;render();} },
           onblur:e=>{ const v=e.target.value.trim(); S.editCol=null; if(v && v!==col.title) saveCol({...col,title:v}); else render(); }})
-      : el('h2',{text:col.title + (col.validation?' ✓':'') + (col.waiting?' ⏸':''), title: col.validation ? 'Etapa de validação' : col.waiting ? 'Etapa de Aguardando: entra com justificativa e aprovação' : col.done ? 'Etapa final' : null, ondblclick:()=>{ if(manage){S.editCol=col.id;render();} }}),
+      : el('h2',{text:col.title + (col.validation?' ✓':'') + (col.waiting?' ⏸':''), title: col.archive ? `Concluídas há ${ARCHIVE_DAYS} dias ou mais (vão para cá sozinhas)` : col.validation ? 'Etapa de validação' : col.waiting ? 'Etapa de Aguardando: entra com justificativa e aprovação' : col.done ? 'Etapa final' : null, ondblclick:()=>{ if(manage){S.editCol=col.id;render();} }}),
     el('span',{class:'count',title:'Cartões nesta visualização',text:String(boardCards(V).filter(c=>c.columnId===col.id && passesFilters(c)).length)}),
-    manage ? el('button',{class:'icon-btn',type:'button','aria-label':'Opções da coluna',onclick:e=>{ e.stopPropagation(); S.menuCol = S.menuCol===col.id?null:col.id; render(); }}, '⋯') : null
+    col.archive ? el('button',{class:'icon-btn',type:'button',title:'Ocultar','aria-label':'Ocultar arquivadas',onclick:()=>{ S.showArchive = false; savePrefs(); render(); }}, '›') : null,
+    manage && !col.archive ? el('button',{class:'icon-btn',type:'button','aria-label':'Opções da coluna',onclick:e=>{ e.stopPropagation(); S.menuCol = S.menuCol===col.id?null:col.id; render(); }}, '⋯') : null
   );
   if (manage && S.menuCol===col.id){
     const total = S.cards.filter(c=>c.columnId===col.id).length;
@@ -855,8 +888,9 @@ function colEl(col, V){
     ));
   }
   const body = el('div',{class:'cards','data-col':col.id}, cards.map(c=>cardEl(c,V)));
-  const node = el('section',{class:'col','data-col':col.id,'aria-label':col.title}, head, body);
-  if (!S.readOnly && !col.done && !col.validation && !col.waiting){
+  const node = el('section',{class:'col'+(col.archive?' archive':''),'data-col':col.id,'aria-label':col.title}, head,
+    col.archive ? el('p',{class:'col-note',text:`Concluídas há ${ARCHIVE_DAYS} dias ou mais. Entram aqui sozinhas.`}) : null, body);
+  if (!S.readOnly && !col.done && !col.validation && !col.waiting && !col.archive){
     if (S.quickCol===col.id){
       const ta = el('textarea',{id:'quick-'+col.id,placeholder:'Título da atividade',onkeydown:e=>{ if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();addQuick(col.id,ta.value);} if(e.key==='Escape'){S.quickCol=null;render();} }});
       node.append(el('div',{class:'quick'}, ta, el('div',{},
@@ -1025,7 +1059,7 @@ function render(){
         el('button',{class:'btn',type:'button',onclick:addColumn},'Criar coluna vazia')) : null));
     return;
   }
-  colsSorted().forEach(c => b.append(colEl(c, V)));
+  colsSorted().forEach(c => b.append(c.archive && !S.showArchive ? archiveRail(c, V) : colEl(c, V)));
   if (canManage(V)) b.append(el('button',{class:'add-col',type:'button',onclick:addColumn},'+ Nova coluna'));
   b.scrollLeft = sx;
   if (S.editCol){ const i=document.getElementById('rename-'+S.editCol); if(i){ i.focus(); i.select(); } }
@@ -1800,10 +1834,10 @@ function openNotifs(){
 }
 
 /* ================= Eventos globais ================= */
-function savePrefs(){ try{ localStorage.setItem(PREF_KEY, JSON.stringify({view:S.view, page:S.page, areaFilter:S.areaFilter, barCollapsed:!!S.barCollapsed, kpiPeriod:S.kpiPeriod})); }catch(e){} }
+function savePrefs(){ try{ localStorage.setItem(PREF_KEY, JSON.stringify({view:S.view, page:S.page, areaFilter:S.areaFilter, barCollapsed:!!S.barCollapsed, showArchive:!!S.showArchive, kpiPeriod:S.kpiPeriod})); }catch(e){} }
 function setView(k){ S.view = k; S.who=''; savePrefs(); render(); }
 function setPage(k){ S.page = k; savePrefs(); render(); }
-try{ const p = JSON.parse(localStorage.getItem(PREF_KEY)||'{}'); if (p.view) S.view=p.view; if (p.page) S.page=p.page; if (p.areaFilter) S.areaFilter=p.areaFilter; S.barCollapsed=!!p.barCollapsed; if (p.kpiPeriod) S.kpiPeriod=p.kpiPeriod; }catch(e){}
+try{ const p = JSON.parse(localStorage.getItem(PREF_KEY)||'{}'); if (p.view) S.view=p.view; if (p.page) S.page=p.page; if (p.areaFilter) S.areaFilter=p.areaFilter; S.barCollapsed=!!p.barCollapsed; S.showArchive=!!p.showArchive; if (p.kpiPeriod) S.kpiPeriod=p.kpiPeriod; }catch(e){}
 $('#q').addEventListener('input', e => { S.q=e.target.value; render(); });
 $('#flt').addEventListener('change', e => { S.label=e.target.value; render(); });
 $('#fltWho').addEventListener('change', e => { S.who=e.target.value; render(); });
