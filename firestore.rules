@@ -73,6 +73,8 @@ service cloud.firestore {
 
     match /admins/{uid} {
       allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+      // quem gerencia um time vê quem é administrador (para não oferecer essas contas na busca de pessoas)
+      allow list: if managesATeam();
       allow create: if isAdmin()
         || (signedIn() && request.auth.uid == uid
             && !exists(/databases/$(database)/documents/meta/setup)

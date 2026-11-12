@@ -8,8 +8,8 @@ import {
   getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection,
   getDocs, onSnapshot, writeBatch, serverTimestamp, query, where,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig } from "./firebase-config.js?v=20261111-2143";
-const APP_VERSION = '11/11 21:43';   // aparece na tela para conferir qual versão está aberta
+import { firebaseConfig } from "./firebase-config.js?v=20261111-2150";
+const APP_VERSION = '11/11 21:50';   // aparece na tela para conferir qual versão está aberta
 
 /* ================= Configuração ================= */
 const PERM_OPTIONS = {
@@ -101,8 +101,8 @@ const accountStatus = u => (u?.status === 'active' || u?.status === 'inactive') 
 const myStatus = () => S.isAdmin ? 'active' : accountStatus(S.profile);
 function availableAccounts(){
   return S.users.filter(u => {
-    const adm = S.admins.some(a=>a.id===u.id);
-    if (!adm && accountStatus(u) !== 'active') return false;
+    if (S.admins.some(a=>a.id===u.id)) return false;   // administrador não entra em time: fica só com as funções de administração
+    if (accountStatus(u) !== 'active') return false;
     if (S.inviteIdx[u.email]) return false;
     if (u.teamId && (S.teamMembers[u.teamId]||[]).some(m=>m.uid===u.id)) return false;
     return true;
@@ -111,6 +111,7 @@ function availableAccounts(){
 /* Líder (não admin): lista de todas as contas (as de outro time aparecem marcadas), liberada pelas regras para quem gerencia um time */
 /* Conta marcada com um time onde ela não está mais (removida ou time excluído): limpa a marcação.
    Confere uma vez por conta a cada sessão. Administrador limpa qualquer conta; quem gerencia, as do próprio time. */
+const isAdminEmail = email => S.admins.some(a=>normEmail(a.email||'')===email || S.users.some(u=>u.id===a.id && u.email===email) || S.directory.some(u=>u.id===a.id && u.email===email));
 const staleChecked = new Set();
 async function fixStaleTeam(u){
   const tid = u?.teamId; if (!tid || staleChecked.has(u.id+'|'+tid)) return;
@@ -124,6 +125,7 @@ async function fixStaleTeam(u){
 function ensureDirectory(){
   if (S.dirSub || S.isAdmin || !S.membership) return;
   S.dirSub = true;
+  subs.push(onSnapshot(collection(db,'admins'), s => { S.admins = s.docs.map(d=>({id:d.id, ...d.data()})); render(); }, ()=>{}));
   subs.push(onSnapshot(collection(db,'users'),
     s => { S.directory = s.docs.map(d=>({id:d.id, ...d.data()})).sort(byName); S.directory.forEach(fixStaleTeam); render(); },
     e => { console.warn('lista de contas', e?.code); S.directory = []; setTimeout(()=>{ S.dirSub = false; render(); }, 15000); }));   // tenta de novo (ex.: regras recém-publicadas)
@@ -515,7 +517,7 @@ function peopleSection(tid, manage){
   const pending = pendingAll.filter(i=>matches(i, lq));
   const taken = new Set([...D.members.map(m=>m.email), ...pendingAll.map(i=>i.email)]);
   // todas as contas (menos as inativas e quem já está neste time); quem está em outro time aparece marcado e não pode ser escolhido
-  const pickable = (S.isAdmin ? S.users : S.directory).filter(u=>u.email && !taken.has(u.email) && accountStatus(u)!=='inactive').sort(byName);
+  const pickable = (S.isAdmin ? S.users : S.directory).filter(u=>u.email && !taken.has(u.email) && accountStatus(u)!=='inactive' && !S.admins.some(a=>a.id===u.id || normEmail(a.email||'')===u.email)).sort(byName);
   const tagOf = u => {
     if (u.teamId && u.teamId !== tid) return {text: S.isAdmin && S.teams[u.teamId]?.name ? `Em ${S.teams[u.teamId].name}` : 'Em outro time', off:true};
     if (S.isAdmin && S.inviteIdx[u.email] && S.inviteIdx[u.email] !== tid) return {text:'Convidada para outro time', off:true};
@@ -569,6 +571,7 @@ async function invite(tid){
   const email = normEmail(ui.inv.email);
   if (!validEmail(email)){ toast('Escolha a pessoa na lista ou digite o e-mail completo.'); return; }
   if (!ui.inv.levelId){ toast('Escolha o nível.'); return; }
+  if (isAdminEmail(email)){ toast('Essa é uma conta de administrador: ela não entra em times.'); return; }
   if (D.members.some(m=>m.email===email && m.active)){ toast('Essa pessoa já está no time.'); return; }
   // o e-mail pode estar ligado a outro time
   try{
@@ -687,6 +690,7 @@ function adminTeamsView(){
     const name = ui.name.trim(), email = normEmail(ui.leaderEmail);
     if (name.length < 2){ toast('Digite o nome do time.'); return; }
     if (!validEmail(email)){ toast('Escolha o líder na lista ou digite o e-mail completo.'); return; }
+    if (isAdminEmail(email)){ toast('Essa é uma conta de administrador: ela não pode liderar um time.'); return; }
     if (S.allTeams.some(t=>t.name.toLowerCase()===name.toLowerCase())){ toast('Já existe um time com esse nome.'); return; }
     let id = slug(name); while (S.allTeams.some(t=>t.id===id)) id += '-2';
     const idx = await getDoc(doc(db,'inviteIndex',email)).catch(()=>null);
