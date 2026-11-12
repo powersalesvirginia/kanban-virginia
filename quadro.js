@@ -5,8 +5,8 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, query, where,
   onSnapshot, runTransaction,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig } from "./firebase-config.js?v=20261111-2223";
-const APP_VERSION = '11/11 22:23';   // aparece na tela para conferir qual versão está aberta
+import { firebaseConfig } from "./firebase-config.js?v=20261112-1044";
+const APP_VERSION = '12/11 10:44';   // aparece na tela para conferir qual versão está aberta
 
 const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);
@@ -145,8 +145,11 @@ const isAbove = (a, b) => !!a && !!b && rank(a) < rank(b);
 const inAreas = (V, areaId) => !!areaId && (V.areas||[]).includes(areaId);
 const sharesArea = (a, b) => (a.areas||[]).some(x => (b.areas||[]).includes(x));
 
-/* Ver (permissão "Vê" do nível): só as suas · colegas do mesmo nível na área · níveis abaixo na área · todas */
-function canSee(card, V){
+/* Ver: todas as atividades do time ficam visíveis para qualquer nível (alterar continua limitado, ver canEdit) */
+const canSee = (card, V) => !!V;
+/* Escopo de acompanhamento (permissão "Vê" do nível): define avisos da equipe, prazos e indicadores.
+   só as suas · colegas do mesmo nível na área · níveis abaixo na área · todas */
+function inScope(card, V){
   if (!V) return false;
   const see = permsOf(V).see || 'own';
   if (see === 'all') return true;
@@ -167,7 +170,11 @@ function canEdit(card, V){
   if (card.assigneeId === V.id) return true;
   if (ed === 'assigned') return false;
   const a = mem(card.assigneeId);
-  if (!a) return card.createdBy === V.id || inAreas(V, card.area);
+  if (!a){   // sem responsável: quem criou, ou a área — mas nunca uma criada por nível acima
+    if (card.createdBy === V.id) return true;
+    const cr = mem(card.createdBy);
+    return inAreas(V, card.area) && !(cr && rank(cr) < rank(V));
+  }
   return rank(a) > rank(V) && (sharesArea(a, V) || inAreas(V, card.area));
 }
 /* Atribuir (permissão "Atribui para"): só a si · níveis abaixo na área · níveis abaixo em qualquer área · qualquer pessoa */
@@ -203,24 +210,20 @@ const watchersOf = card => [...new Set([...delegatorsOf(card), ...superiorsOf(me
 function viewOptions(V){
   const o = [['mine','Minhas atividades']];
   if (V && (permsOf(V).assign||'self') !== 'self') o.push(['delegated','Que eu atribuí']);
-  o.push(['sector', seesAll(V) ? 'Setor / Geral' : 'Meu setor']);
+  o.push(['sector', 'Setor / Geral']);
   return o;
 }
 const visibleCards = V => S.cards.filter(c => canSee(c, V));
 function boardCards(V){
   const vis = visibleCards(V);
   if (S.view === 'delegated') return vis.filter(c => c.assigneeId && c.assigneeId !== V.id && delegatorsOf(c).includes(V.id));
-  if (S.view === 'sector'){
-    if (seesAll(V)) return vis;
-    const mine = V.areas || [];
-    return mine.length ? vis.filter(c => mine.some(a => cardInArea(c, a))) : vis;
-  }
+  if (S.view === 'sector') return vis;   // o time inteiro; a barra de áreas filtra
   return vis.filter(c => c.assigneeId === V.id || (!c.assigneeId && c.createdBy === V.id) || (c.validatorId === V.id && isValCol(c) && c.validation?.status === 'pending'));
 }
 /* Área do cartão: a escolhida no cartão ou, sem isso, as áreas do responsável */
 const cardInArea = (c, a) => c.area === a || (!c.area && (mem(c.assigneeId)?.areas||[]).includes(a));
 /* Áreas que a pessoa pode filtrar: todas (quem vê tudo) ou as suas */
-const areaChoices = V => !V ? [] : seesAll(V) ? S.areas.slice() : S.areas.filter(a => (V.areas||[]).includes(a.id));
+const areaChoices = V => !V ? [] : S.areas.slice().sort((a,b)=>((V.areas||[]).includes(b.id)) - ((V.areas||[]).includes(a.id)) || byName(a,b));   // as suas áreas primeiro
 function passesFilters(c, skipArea){
   const q = S.q.trim().toLowerCase();
   return (skipArea || !S.areaFilter || cardInArea(c, S.areaFilter))
@@ -559,7 +562,7 @@ function teamAbove(card, actor){
   const subj = mem(card.assigneeId) || mem(card.createdBy) || actor;
   if (!subj) return [];
   const ids = new Set([
-    ...S.members.filter(x => x.active && rank(x) < rank(subj) && canSee(card, x)).map(x=>x.id),   // acima de quem está com a atividade e que enxergam o cartão
+    ...S.members.filter(x => x.active && rank(x) < rank(subj) && inScope(card, x)).map(x=>x.id),   // acima de quem está com a atividade e que enxergam o cartão
     ...chainUp(subj), ...chainUp(actor),                                                            // a cadeia de superiores (de quem está com ela e de quem agiu)
     ...S.members.filter(x => x.active && permsOf(x).manageTeam).map(x=>x.id),                         // quem gerencia o time sempre acompanha
   ]);
@@ -647,7 +650,7 @@ async function checkDeadlines(){
   const have = new Set(S.notifications.map(n=>n.id));
   const jobs = [];
   for (const c of S.cards){
-    if (!c.due || !c.assigneeId || !mem(c.assigneeId) || isDoneCard(c) || isWaitCol(c) || !canSee(c, L)) continue;
+    if (!c.due || !c.assigneeId || !mem(c.assigneeId) || isDoneCard(c) || isWaitCol(c) || !inScope(c, L)) continue;
     const n = daysTo(c.due), safe = c.due.replace(/[^0-9-]/g,'');
     if (n < 0){
       for (const to of new Set([c.assigneeId, ...watchersOf(c)])){
@@ -1547,7 +1550,7 @@ function kpiEl(V){
       el('td',{text:String(t.onTime)}), el('td',{text:String(t.lateDel)}), el('td',{text:pc==null?'—':pc+'%'}), el('td',{text:fmtDays(avgOf(t))}))); })()));
   const reasons = Object.entries(K.reasons).sort((a,b)=>b[1]-a[1]);
   const reqs = Object.entries(K.byReq).sort((a,b)=>b[1]-a[1]);
-  const lateList = K.lateOpenList.filter(c=>canSee(c, V)).sort((a,b)=>(a.due||'').localeCompare(b.due||''));
+  const lateList = K.lateOpenList.filter(c=>inScope(c, V)).sort((a,b)=>(a.due||'').localeCompare(b.due||''));
   return el('div',{class:'kpi'},
     el('div',{class:'kpi-head'}, el('h2',{text:title}), el('span',{text:`${fmtDate(R.from)} a ${fmtDate(R.to)} · entregas contadas pela data de conclusão`}),
       selId && !single ? el('button',{class:'btn ghost',type:'button',onclick:()=>{ S.kpiPerson=null; render(); }},'Ver o total') : null),

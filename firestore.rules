@@ -46,7 +46,10 @@ service cloud.firestore {
       return isAdmin() || myLevel(t).perms.edit == 'all'
         || c.get('assigneeId', '') == request.auth.uid
         || (myLevel(t).perms.edit == 'below' && (
-             (c.get('assigneeId', '') == '' && (c.get('createdBy', '') == request.auth.uid || (c.get('area', '') != '' && c.area in myAreas(t))))
+             (c.get('assigneeId', '') == '' && (c.get('createdBy', '') == request.auth.uid
+                 || (c.get('area', '') != '' && c.area in myAreas(t)
+                     && (!exists(/databases/$(database)/documents/teams/$(t)/members/$(c.get('createdBy', '-')))
+                         || levelOf(t, memberOf(t, c.createdBy).levelId).rank >= myLevel(t).rank))))
              || (c.get('assigneeId', '') != ''
                  && exists(/databases/$(database)/documents/teams/$(t)/members/$(c.assigneeId))
                  && levelOf(t, memberOf(t, c.assigneeId).levelId).rank > myLevel(t).rank
