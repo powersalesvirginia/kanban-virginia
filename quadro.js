@@ -5,8 +5,8 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, query, where,
   onSnapshot, runTransaction,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig } from "./firebase-config.js?v=20261111-2212";
-const APP_VERSION = '11/11 22:12';   // aparece na tela para conferir qual versão está aberta
+import { firebaseConfig } from "./firebase-config.js?v=20261111-2223";
+const APP_VERSION = '11/11 22:23';   // aparece na tela para conferir qual versão está aberta
 
 const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);
@@ -428,6 +428,43 @@ function askHold(card, V){
   root.replaceChildren(el('div',{class:'scrim',onclick:close}, modal));
   setTimeout(()=>ta.focus(),0);
 }
+/* Atividade sem validação obrigatória indo para Validação: quem move escolhe de quem quer a validação */
+function validatorChoices(card, V){
+  return S.members.filter(m => m.active && m.id !== V.id && rank(m) < rank(V)).sort((a,b)=>rank(a)-rank(b) || byName(a,b));
+}
+function needsValidatorPick(card, colId, V){
+  return !!colById(colId)?.validation && !card.requiresValidation && validatorChoices(card, V).length > 0;
+}
+function askValidator(card, V, targetColId){
+  const root = $('#modalRoot');
+  const close = () => { root.replaceChildren(); document.removeEventListener('keydown', esc); };
+  const esc = e => { if (e.key==='Escape') close(); };
+  document.addEventListener('keydown', esc);
+  const people = validatorChoices(card, V);
+  const sup = superiorsOf(V);
+  const def = (people.find(p=>p.id===card.assignedBy) || people.find(p=>sup.includes(p.id)) || people[0]).id;
+  const sel = el('select',{id:'val-who'}, people.map(p=>el('option',{value:p.id,selected:p.id===def,text:`${p.name} · ${levelName(p)}`})));
+  const ta = el('textarea',{id:'val-note',placeholder:'Opcional: o que a pessoa deve conferir'});
+  const modal = el('div',{class:'modal',style:'max-width:480px',role:'dialog','aria-modal':'true','aria-label':'Enviar para validação',onclick:e=>e.stopPropagation()},
+    el('div',{class:'m-head'}, el('div',{style:'flex:1;font-family:var(--f-display);font-weight:700;font-size:18px;padding:6px 8px'},'Enviar para validação'),
+      el('button',{class:'icon-btn',type:'button','aria-label':'Fechar',onclick:close},'✕')),
+    el('div',{class:'t-body'},
+      el('div',{class:'note',text:'Esta atividade não exigia validação. Escolha quem deve validar: a pessoa recebe um aviso, e os superiores acompanham.'}),
+      el('label',{class:'field'}, el('span',{},'Quem vai validar'), sel),
+      el('label',{class:'field'}, el('span',{},'Recado'), ta)),
+    el('div',{class:'m-foot'}, el('span',{class:'sp'}),
+      el('button',{class:'btn ghost',type:'button',onclick:close},'Cancelar'),
+      el('button',{class:'btn primary',type:'button',onclick:()=>{
+        close();
+        const cur = S.cards.find(c=>c.id===card.id) || card;
+        const colId = targetColId || validationCol()?.id;
+        saveCard({...cur, columnId:colId, order:nextOrder(colId), requiresValidation:true, validatorId:sel.value,
+          validation:{status:'pending', at:nowISO(), by:V.id, note:ta.value.trim()}});
+        toast(`Enviada para a validação de ${mname(sel.value)}`);
+      }}, 'Enviar')));
+  root.replaceChildren(el('div',{class:'scrim',onclick:close}, modal));
+  setTimeout(()=>sel.focus(),0);
+}
 function prevWorkCol(){
   const cols = colsSorted(), vc = validationCol();
   const before = vc ? cols.filter(c=>!c.done && !c.validation && !c.waiting && (c.order??0) < (vc.order??0)) : [];
@@ -479,7 +516,7 @@ function notifText(n){
     case 'priority':  return `${by} mudou a prioridade de “${n.title}” para Alta`;
     case 'due':       return `${by} mudou o prazo de “${n.title}” para ${n.due ? fmtDate(n.due) : 'sem prazo'}`;
     case 'deleted':   return `${by} excluiu “${n.title}”, que estava com você`;
-    case 'validate':  return `${by} enviou “${n.title}” para a sua validação`;
+    case 'validate':  return `${by} enviou “${n.title}” para a sua validação${n.note?`: “${n.note}”`:''}`;
     case 'approved':  return `${by} validou e concluiu “${n.title}”`;
     case 'returned':  return `${by} devolveu “${n.title}” para ajustes${n.note?`: “${n.note}”`:''}`;
     case 'ack_ok':    return `${by} confirmou o recebimento de “${n.title}”`;
@@ -513,10 +550,21 @@ function notify(to, data){
 /* Acompanhamento da equipe: os superiores de quem está com a atividade recebem uma cópia discreta
    de tudo o que acontece com ela (aba "Equipe" nos avisos, sem contar no sino) */
 let FYI = null;
+function chainUp(m){   // superiores diretos, os superiores deles, e assim por diante até o topo
+  const out = new Set(); let frontier = m ? [m] : [];
+  while (frontier.length){ const next = []; for (const x of frontier) for (const id of superiorsOf(x)) if (!out.has(id)){ out.add(id); next.push(mem(id)); } frontier = next.filter(Boolean); }
+  return [...out];
+}
 function teamAbove(card, actor){
   const subj = mem(card.assigneeId) || mem(card.createdBy) || actor;
   if (!subj) return [];
-  return S.members.filter(x => x.active && x.id !== subj.id && x.id !== actor?.id && rank(x) < rank(subj) && canSee(card, x)).map(x=>x.id);
+  const ids = new Set([
+    ...S.members.filter(x => x.active && rank(x) < rank(subj) && canSee(card, x)).map(x=>x.id),   // acima de quem está com a atividade e que enxergam o cartão
+    ...chainUp(subj), ...chainUp(actor),                                                            // a cadeia de superiores (de quem está com ela e de quem agiu)
+    ...S.members.filter(x => x.active && permsOf(x).manageTeam).map(x=>x.id),                         // quem gerencia o time sempre acompanha
+  ]);
+  ids.delete(actor?.id);
+  return [...ids].filter(id => mem(id)?.active);
 }
 function withFyi(card, actor, fn){
   const outer = FYI; FYI = {sent:new Set(), events:[]};
@@ -556,7 +604,7 @@ function cardEvents(before, after, actor, ctx={}){
   if (!wasDone && isDone) notifyMany(audience, {...base, type: valChanged && vs(after)==='approved' ? 'approved' : 'done'}, skip);
   else if (wasDone && !isDone) notifyMany(audience, {...base, type:'reopened'}, skip);
   if (valChanged){
-    if (vs(after) === 'pending') notifyMany([after.validatorId], {...base, type:'validate'}, skip);
+    if (vs(after) === 'pending') notifyMany([after.validatorId], {...base, type:'validate', note:after.validation?.note||''}, skip);
     if (vs(after) === 'returned') notifyMany([after.assigneeId], {...base, type:'returned', note:after.validation?.note||''}, skip);
   }
   const ackChanged = as(before) !== as(after);
@@ -904,10 +952,13 @@ function renderTop(V){
   const unread = V ? directNotifs(V).filter(n=>!n.read).length : 0;
   const teamUnread = V ? teamNotifs(V).some(n=>!n.read) : false;
   const bell = $('#bellBtn');
-  bell.classList.toggle('team-dot', !unread && teamUnread);
+  bell.classList.remove('team-dot');
   bell.hidden = !V;
-  bell.querySelector('.bell-count').textContent = unread > 9 ? '9+' : String(unread);
-  bell.querySelector('.bell-count').hidden = !unread;
+  const tCount = V ? teamNotifs(V).filter(n=>!n.read).length : 0;
+  const bc = bell.querySelector('.bell-count');
+  bc.textContent = unread ? (unread > 9 ? '9+' : String(unread)) : (tCount > 9 ? '9+' : String(tCount));
+  bc.hidden = !unread && !tCount;
+  bc.classList.toggle('soft', !unread && !!tCount);   // só acontecimentos da equipe: número cinza, discreto
   bell.setAttribute('aria-label', unread ? `Avisos: ${unread} não lido${unread===1?'':'s'}` : 'Avisos');
   // faixa de simulação
   const bn = $('#banner');
@@ -1046,6 +1097,7 @@ function onDrop(e, colId){
     if (card.hold?.status==='requested'){ toast(`Já existe um pedido de pausa aguardando ${mname(card.hold.approverId)}.`); render(); return; }
     askHold(card, V); render(); return;
   }
+  if (needsValidatorPick(card, colId, V)){ askValidator(card, V, colId); render(); return; }
   const r = routeMove(card, colId, V);
   if (r.blocked){ toast(r.msg); render(); return; }
   if (r.card.columnId !== colId) order = nextOrder(r.card.columnId);
@@ -1322,10 +1374,12 @@ function openCard(id, startTab){
     // validação ao mudar de etapa pelo seletor
     let out = {...cur, ...d};
     let msg = null;
-    let wantHold = false;
+    let wantHold = false, wantVal = null;
     if (!isNew && d.columnId !== cur.columnId && colById(d.columnId)?.waiting){
       if (cur.hold?.status==='requested'){ toast(`Já existe um pedido de pausa aguardando ${mname(cur.hold.approverId)}.`); return; }
       out.columnId = cur.columnId; wantHold = true;
+    } else if (!isNew && d.columnId !== cur.columnId && needsValidatorPick({...cur, ...d}, d.columnId, V)){
+      out.columnId = cur.columnId; wantVal = d.columnId;
     } else if (!isNew && d.columnId !== cur.columnId){
       const r = routeMove({...cur, ...d, columnId:cur.columnId}, d.columnId, V);
       if (r.blocked){ toast(r.msg); return; }
@@ -1344,6 +1398,7 @@ function openCard(id, startTab){
     saveCard(out); close();
     if (reassigned && out.assigneeId && out.assigneeId !== V.id) notifyAssignment(out, V, prevDelegators);
     if (wantHold){ askHold(S.cards.find(c=>c.id===out.id)||out, V); return; }
+    if (wantVal){ askValidator(S.cards.find(c=>c.id===out.id)||out, V, wantVal); return; }
     const goesAway = S.view==='mine' && out.assigneeId && out.assigneeId!==V.id;
     toast(msg || (goesAway ? `Atribuída a ${mname(out.assigneeId)}. Acompanhe em “Que eu atribuí”.` : (isNew?'Atividade criada':'Alterações salvas')));
   }

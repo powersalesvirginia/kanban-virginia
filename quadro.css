@@ -459,3 +459,4 @@ button.me:hover,button.me[aria-expanded="true"]{border-color:var(--accent)}
 .np-item.team.unread .np-dot{background:var(--muted)}
 .np-item.team.unread .np-txt>span{font-weight:500}
 #bellBtn.team-dot::after{content:'';position:absolute;top:-2px;right:-2px;width:8px;height:8px;border-radius:50%;background:var(--muted);border:2px solid var(--card)}
+.bell-count.soft{background:var(--muted)}
