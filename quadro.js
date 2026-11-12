@@ -5,8 +5,8 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, query, where,
   onSnapshot, runTransaction,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig } from "./firebase-config.js?v=20261111-2150";
-const APP_VERSION = '11/11 21:50';   // aparece na tela para conferir qual versão está aberta
+import { firebaseConfig } from "./firebase-config.js?v=20261111-2212";
+const APP_VERSION = '11/11 22:12';   // aparece na tela para conferir qual versão está aberta
 
 const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);
@@ -338,13 +338,13 @@ function saveCard(c){
   const hh = h.filter(x=>x.type!=='_skip');
   if (hh.length) c.history = [...(c.history||[]), ...hh].slice(-80);
   const p = put('cards', c);
-  if (actor) cardEvents(b, c, actor, ctx);
+  if (actor) withFyi(c, actor, () => cardEvents(b, c, actor, ctx));
   return p;
 }
 function deleteCard(id){
   const before = S.cards.find(x=>x.id===id); const actor = viewer();
   if (before && actor && before.assigneeId && before.assigneeId !== actor.id)
-    notify(before.assigneeId, {type:'deleted', cardId:id, title:before.title, by:actor.id});
+    withFyi(before, actor, () => notify(before.assigneeId, {type:'deleted', cardId:id, title:before.title, by:actor.id, ownerId:before.assigneeId}));
   return remove('cards', id);
 }
 const saveCol = c => put('columns', c, 'team');
@@ -441,14 +441,34 @@ const NOTIF_TAG = {
   priority:{t:'Prioridade alta', c:'bad'}, due:{t:'Prazo alterado', c:'warn'}, deleted:{t:'Excluída', c:'bad'},
   validate:{t:'Para validar', c:'warn'}, approved:{t:'Validada', c:'ok'}, returned:{t:'Devolvida', c:'bad'},
   ack_ok:{t:'Recebimento confirmado', c:'ok'}, ack_time:{t:'Pedido de prazo', c:'warn'}, ack_accepted:{t:'Prazo aceito', c:'ok'}, ack_kept:{t:'Prazo mantido', c:'warn'},
-  reason:{t:'Motivo do atraso', c:'warn'}, hold_request:{t:'Pedido de pausa', c:'warn'}, hold_approved:{t:'Pausa aprovada', c:'ok'}, hold_denied:{t:'Pausa recusada', c:'bad'}, hold_started:{t:'Em aguardando', c:'warn'}, hold_resumed:{t:'Retomada', c:'accent'}, mention:{t:'Menção', c:'accent'}, attach:{t:'Anexo', c:'accent'}, comment:{t:'Comentário', c:'accent'},
+  reason:{t:'Motivo do atraso', c:'warn'}, hold_request:{t:'Pedido de pausa', c:'warn'}, hold_approved:{t:'Pausa aprovada', c:'ok'}, hold_denied:{t:'Pausa recusada', c:'bad'}, hold_started:{t:'Em aguardando', c:'warn'}, hold_resumed:{t:'Retomada', c:'accent'}, mention:{t:'Menção', c:'accent'}, repassed:{t:'Repassada', c:'accent'}, delegated:{t:'Atribuída', c:'accent'}, attach:{t:'Anexo', c:'accent'}, comment:{t:'Comentário', c:'accent'},
 };
 const myNotifs = V => S.notifications.filter(n => n.to === V.id).sort((a,b) => (b.at||'').localeCompare(a.at||''));
+const directNotifs = V => myNotifs(V).filter(n => !n.fyi);
+const teamNotifs = V => myNotifs(V).filter(n => n.fyi);
 function notifText(n){
   const by = mname(n.by);
   const owner = mem(n.ownerId)?.name;
-  const of = owner && n.ownerId !== n.to ? ` (de ${owner})` : '';
+  const of = owner && n.ownerId !== n.to && n.ownerId !== n.by ? ` (de ${owner})` : '';
+  if (n.fyi){   // cópia para o superior: o texto não fala com "você"
+    const who = mname(n.recip);
+    switch (n.type){
+      case 'deleted':  return `${by} excluiu “${n.title}”${of}`;
+      case 'validate': return `${by} enviou “${n.title}” para a validação de ${who}`;
+      case 'mention':  return `${by} mencionou ${who} em “${n.title}”`;
+      case 'returned': return `${by} devolveu “${n.title}” para ajustes de ${who}${n.note?`: “${n.note}”`:''}`;
+      case 'priority': return `${by} mudou a prioridade de “${n.title}”${of} para Alta`;
+      case 'due':      return `${by} mudou o prazo de “${n.title}”${of} para ${n.due ? fmtDate(n.due) : 'sem prazo'}`;
+      case 'ack_accepted': return `${by} aceitou o novo prazo de “${n.title}”${of}: ${fmtDate(n.due)}`;
+      case 'ack_kept': return `${by} manteve o prazo original de “${n.title}”${of}`;
+      case 'hold_approved': return `${by} aprovou a pausa de “${n.title}”${of}`;
+      case 'hold_denied':   return `${by} recusou a pausa de “${n.title}”${of}`;
+      case 'hold_request':  return `${by} pediu para pausar “${n.title}”: “${n.note}”`;
+      case 'comment':  return `${by} comentou em “${n.title}”${of}`;
+    }
+  }
   switch (n.type){
+    case 'repassed':  return `${by} repassou “${n.title}”, que você atribuiu, para ${mname(n.toId)}`;
     case 'assigned':  return n.auto ? `Atividade recorrente criada para você: “${n.title}”` : `${by} atribuiu a você: “${n.title}”`;
     case 'delegated': return `${by} atribuiu “${n.title}” para ${mname(n.toId)}`;
     case 'created':   return `${by} criou uma nova atividade: “${n.title}”`;
@@ -485,13 +505,42 @@ function ago(iso){
   const h = Math.round(m/60); if (h < 24) return `há ${h} h`;
   const d = Math.round(h/24); return `há ${d} dia${d===1?'':'s'}`;
 }
-function notify(to, data){ if (to) put('notifications', {id:uid('n_'), to, read:false, at:nowISO(), ...data}); }
-function notifyMany(ids, data, skip=[]){ for (const id of new Set(ids)) if (id && !skip.includes(id)) notify(id, data); }
-function notifyAssignment(card, V, prevDelegators){
-  notify(card.assigneeId, {type:'assigned', cardId:card.id, title:card.title, by:V.id});
-  const ids = [...prevDelegators, ...superiorsOf(mem(card.assigneeId))];
-  notifyMany(ids, {type:'delegated', cardId:card.id, title:card.title, by:V.id, toId:card.assigneeId}, [V.id, card.assigneeId]);
+function notify(to, data){
+  if (!to) return;
+  put('notifications', {id:uid('n_'), to, read:false, at:nowISO(), ...data});
+  if (FYI && !data.fyi){ FYI.sent.add(to); FYI.events.push({...data, recip:to}); }
 }
+/* Acompanhamento da equipe: os superiores de quem está com a atividade recebem uma cópia discreta
+   de tudo o que acontece com ela (aba "Equipe" nos avisos, sem contar no sino) */
+let FYI = null;
+function teamAbove(card, actor){
+  const subj = mem(card.assigneeId) || mem(card.createdBy) || actor;
+  if (!subj) return [];
+  return S.members.filter(x => x.active && x.id !== subj.id && x.id !== actor?.id && rank(x) < rank(subj) && canSee(card, x)).map(x=>x.id);
+}
+function withFyi(card, actor, fn){
+  const outer = FYI; FYI = {sent:new Set(), events:[]};
+  let f;
+  try{ fn(); } finally { f = FYI; FYI = outer; }
+  if (!card || !actor || !f.events.length) return;
+  const ids = teamAbove(card, actor).filter(id => !f.sent.has(id));
+  if (!ids.length) return;
+  const seen = new Set();
+  for (const ev of f.events){
+    let e = ev;
+    if (e.type === 'assigned') e = {...e, type:'delegated', toId:e.recip};
+    if (e.type === 'repassed') e = {...e, type:'delegated'};
+    if (seen.has(e.type)) continue; seen.add(e.type);
+    for (const id of ids) put('notifications', {id:uid('n_'), to:id, read:false, at:nowISO(), ...e, fyi:true});
+  }
+}
+function notifyMany(ids, data, skip=[]){ for (const id of new Set(ids)) if (id && !skip.includes(id)) notify(id, data); }
+function notifyAssignment(card, V, prevDelegators){ withFyi(card, V, () => {
+  notify(card.assigneeId, {type:'assigned', cardId:card.id, title:card.title, by:V.id});
+  // quem atribuiu antes (ex.: o Líder) fica sabendo que a atividade foi repassada
+  notifyMany(prevDelegators, {type:'repassed', cardId:card.id, title:card.title, by:V.id, toId:card.assigneeId}, [V.id, card.assigneeId]);
+  notifyMany(superiorsOf(mem(card.assigneeId)), {type:'delegated', cardId:card.id, title:card.title, by:V.id, toId:card.assigneeId}, [V.id, card.assigneeId, ...prevDelegators]);
+}); }
 /* Eventos de status — a cada gravação de cartão */
 function cardEvents(before, after, actor, ctx={}){
   const base = {cardId:after.id, title:after.title, by:actor.id, ownerId:after.assigneeId||''};
@@ -534,9 +583,9 @@ function cardEvents(before, after, actor, ctx={}){
   if (ctx.resumed != null) notifyMany([...watchersOf(after), after.assigneeId], {...base, type:'hold_resumed', days:ctx.resumed, due:after.due||''}, skip);
 }
 function markRead(n){ if (!n.read) put('notifications', {...n, read:true}); }
-async function markAllRead(V){
+async function markAllRead(V, list){
   const old = Date.now() - 14*86400000;
-  for (const n of myNotifs(V)){
+  for (const n of (list || myNotifs(V))){
     if (n.read && Date.parse(n.at) < old) await remove('notifications', n.id);
     else if (!n.read) await put('notifications', {...n, read:true});
   }
@@ -656,10 +705,12 @@ async function addComment(card, text, V){
   if (local){ local.commentCount = n; local.lastCommentAt = doc.at; }
   if (S.store === 'db') db.collection('cards').doc(card.id).update({commentCount:n, lastCommentAt:doc.at}).catch(()=>{});
   else persistLocal();
-  const base = {cardId:card.id, title:card.title, by:V.id};
-  notifyMany(mentions, {...base, type:'mention'}, [V.id]);
-  const others = card.assigneeId === V.id ? [card.assignedBy, card.validatorId] : [card.assigneeId];
-  notifyMany(others.filter(id => id && !mentions.includes(id)), {...base, type:'comment'}, [V.id]);
+  const base = {cardId:card.id, title:card.title, by:V.id, ownerId:card.assigneeId||''};
+  withFyi(card, V, () => {
+    notifyMany(mentions, {...base, type:'mention'}, [V.id]);
+    const others = card.assigneeId === V.id ? [card.assignedBy, card.validatorId] : [card.assigneeId];
+    notifyMany(others.filter(id => id && !mentions.includes(id)), {...base, type:'comment'}, [V.id]);
+  });
   render();
   return true;
 }
@@ -850,8 +901,10 @@ function renderTop(V){
   rs.value = rids.includes(rcur) ? rcur : ''; S.req = rs.value;
   rs.hidden = !filtersOn || !rids.length;
   // avisos
-  const unread = V ? myNotifs(V).filter(n=>!n.read).length : 0;
+  const unread = V ? directNotifs(V).filter(n=>!n.read).length : 0;
+  const teamUnread = V ? teamNotifs(V).some(n=>!n.read) : false;
   const bell = $('#bellBtn');
+  bell.classList.toggle('team-dot', !unread && teamUnread);
   bell.hidden = !V;
   bell.querySelector('.bell-count').textContent = unread > 9 ? '9+' : String(unread);
   bell.querySelector('.bell-count').hidden = !unread;
@@ -1638,14 +1691,41 @@ function openNotifs(){
   const close = () => { root.replaceChildren(); document.removeEventListener('keydown', esc); };
   const esc = e => { if (e.key==='Escape') close(); };
   document.addEventListener('keydown', esc);
+  let tab = 'me';
   const draw = () => {
-    const list = myNotifs(V).slice(0, 60);
+    const direct = directNotifs(V), team = teamNotifs(V);
+    const hasTeam = team.length > 0 || (permsOf(V).see||'own') !== 'own';
+    if (!hasTeam) tab = 'me';
+    const src = tab === 'team' ? team : direct;
+    const list = src.slice(0, 60);
     const unread = list.filter(n=>!n.read).length;
+    const dU = direct.filter(n=>!n.read).length, tU = team.filter(n=>!n.read).length;
+    const openN = (n, group) => { (group||[n]).forEach(markRead); close(); const card = S.cards.find(c=>c.id===n.cardId); if (card && canSee(card, V)) openCard(card.id, (n.type==='mention'||n.type==='comment')?'comentarios':null); else toast('Esta atividade não está mais disponível para você.'); };
+    // Equipe: uma linha por atividade (o acontecimento mais recente + quantos outros)
+    const teamRows = () => {
+      const groups = new Map();
+      for (const n of team){ const k = n.cardId || n.id; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(n); }
+      return [...groups.values()].slice(0, 40).map(g => {
+        const n = g[0], card = S.cards.find(c=>c.id===n.cardId), col = card ? colById(card.columnId) : null;
+        const un = g.filter(x=>!x.read).length;
+        return el('button',{type:'button',class:'np-item team'+(un?' unread':''),onclick:()=>openN(n, g)},
+          el('span',{class:'np-dot','aria-hidden':'true'}),
+          el('span',{class:'np-txt'},
+            NOTIF_TAG[n.type] ? el('em',{class:'np-tag '+NOTIF_TAG[n.type].c,text:NOTIF_TAG[n.type].t}) : null,
+            el('span',{text:notifText(n)}),
+            el('small',{text:[ago(n.at), col ? `está em ${col.title}` : 'cartão removido', g.length>1 ? `+${g.length-1} acontecimento${g.length===2?'':'s'}` : ''].filter(Boolean).join(' · ')})));
+      });
+    };
     const panel = el('div',{class:'notif-panel',role:'dialog','aria-label':'Avisos',onclick:e=>e.stopPropagation()},
       el('div',{class:'np-head'},
         el('b',{text:'Avisos'}),
-        unread ? el('button',{class:'btn ghost',type:'button',onclick:async()=>{ await markAllRead(V); draw(); }},'Marcar todos como lidos') : null,
+        unread ? el('button',{class:'btn ghost',type:'button',onclick:async()=>{ await markAllRead(V, src); draw(); }},'Marcar todos como lidos') : null,
         el('button',{class:'icon-btn',type:'button','aria-label':'Fechar',onclick:close},'✕')),
+      hasTeam ? el('div',{class:'np-tabs',role:'tablist'},
+        el('button',{type:'button',role:'tab','aria-selected':String(tab==='me'),class:'np-tab'+(tab==='me'?' on':''),onclick:()=>{ tab='me'; draw(); }}, 'Para você', dU ? el('span',{class:'np-count',text:String(dU)}) : null),
+        el('button',{type:'button',role:'tab','aria-selected':String(tab==='team'),class:'np-tab'+(tab==='team'?' on':''),onclick:()=>{ tab='team'; draw(); }}, 'Equipe', tU ? el('span',{class:'np-count soft',text:tU>99?'99+':String(tU)}) : null)) : null,
+      tab === 'team' && hasTeam ? el('p',{class:'np-hint',text:'Tudo o que acontece com as atividades de quem está abaixo de você. Não conta no sino.'}) : null,
+      tab === 'team' ? (team.length ? el('div',{class:'np-list'}, teamRows()) : el('div',{class:'np-empty',text:'Nenhum acontecimento da equipe por enquanto.'})) :
       list.length ? el('div',{class:'np-list'}, list.map(n=>{
         const card = S.cards.find(c=>c.id===n.cardId);
         const col = card ? colById(card.columnId) : null;

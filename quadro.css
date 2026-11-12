@@ -448,3 +448,14 @@ button.me:hover,button.me[aria-expanded="true"]{border-color:var(--accent)}
 .brand-logo{height:34px;aspect-ratio:1.274}
 .auth-logo{height:84px;aspect-ratio:1.274;align-self:flex-start}
 .brand{align-items:center}
+
+/* Avisos: abas Para você / Equipe */
+.np-tabs{display:flex;gap:4px;padding:8px 12px 0;border-bottom:1px solid var(--line)}
+.np-tab{display:inline-flex;align-items:center;gap:6px;border:0;background:transparent;padding:8px 10px;font:inherit;font-size:13px;font-weight:600;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer}
+.np-tab.on{color:var(--ink);border-bottom-color:var(--accent)}
+.np-count{min-width:18px;height:18px;border-radius:9px;padding:0 5px;display:inline-grid;place-items:center;font-size:10px;font-weight:700;background:var(--bad);color:var(--card)}
+.np-count.soft{background:var(--surface);color:var(--muted);border:1px solid var(--line)}
+.np-hint{margin:0;padding:8px 16px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--line)}
+.np-item.team.unread .np-dot{background:var(--muted)}
+.np-item.team.unread .np-txt>span{font-weight:500}
+#bellBtn.team-dot::after{content:'';position:absolute;top:-2px;right:-2px;width:8px;height:8px;border-radius:50%;background:var(--muted);border:2px solid var(--card)}
