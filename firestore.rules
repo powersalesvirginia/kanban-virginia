@@ -92,6 +92,12 @@ service cloud.firestore {
       // o administrador aprova, inativa, reativa e exclui
       allow update: if isAdmin();
       allow delete: if isAdmin() && request.auth.uid != uid;
+      // quem gerencia o time limpa a marcação de quem já não está mais nele (só o campo teamId, só para vazio)
+      allow update: if signedIn() && resource.data.get('teamId', '') != ''
+        && canManage(resource.data.teamId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['teamId'])
+        && request.resource.data.teamId == ''
+        && !existsAfter(/databases/$(database)/documents/teams/$(resource.data.teamId)/members/$(uid));
       // a pessoa edita o próprio perfil, mas não muda a própria situação;
       // teamId só pode apontar para um time em que ela realmente entrou (ou ficar vazio)
       allow update: if signedIn() && request.auth.uid == uid

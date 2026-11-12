@@ -8,8 +8,8 @@ import {
   getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection,
   getDocs, onSnapshot, writeBatch, serverTimestamp, query, where,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig } from "./firebase-config.js?v=20261111-0917";
-const APP_VERSION = '11/11 09:17';   // aparece na tela para conferir qual versão está aberta
+import { firebaseConfig } from "./firebase-config.js?v=20261111-2143";
+const APP_VERSION = '11/11 21:43';   // aparece na tela para conferir qual versão está aberta
 
 /* ================= Configuração ================= */
 const PERM_OPTIONS = {
@@ -109,11 +109,23 @@ function availableAccounts(){
   }).sort(byName);
 }
 /* Líder (não admin): lista de todas as contas (as de outro time aparecem marcadas), liberada pelas regras para quem gerencia um time */
+/* Conta marcada com um time onde ela não está mais (removida ou time excluído): limpa a marcação.
+   Confere uma vez por conta a cada sessão. Administrador limpa qualquer conta; quem gerencia, as do próprio time. */
+const staleChecked = new Set();
+async function fixStaleTeam(u){
+  const tid = u?.teamId; if (!tid || staleChecked.has(u.id+'|'+tid)) return;
+  if (!S.isAdmin && !(S.membership && S.membership.teamId === tid && canManage(tid))) return;
+  staleChecked.add(u.id+'|'+tid);
+  try{
+    const m = await getDoc(doc(db,'teams',tid,'members',u.id));
+    if (!m.exists()) await updateDoc(doc(db,'users',u.id), {teamId:''});
+  }catch(e){ console.warn('limpeza de time', u.email, e?.code); }
+}
 function ensureDirectory(){
   if (S.dirSub || S.isAdmin || !S.membership) return;
   S.dirSub = true;
   subs.push(onSnapshot(collection(db,'users'),
-    s => { S.directory = s.docs.map(d=>({id:d.id, ...d.data()})).sort(byName); render(); },
+    s => { S.directory = s.docs.map(d=>({id:d.id, ...d.data()})).sort(byName); S.directory.forEach(fixStaleTeam); render(); },
     e => { console.warn('lista de contas', e?.code); S.directory = []; setTimeout(()=>{ S.dirSub = false; render(); }, 15000); }));   // tenta de novo (ex.: regras recém-publicadas)
 }
 const matches = (u, q) => !q || (u.name||'').toLowerCase().includes(q) || (u.email||'').toLowerCase().includes(q);
@@ -265,6 +277,7 @@ function startSubscriptions(){
       S.users = s.docs.map(d=>({id:d.id, ...d.data()})).sort(byName);
       // contas antigas sem o campo teamId não aparecem na busca do líder: completa o campo (vazio = sem time)
       for (const d of s.docs) if (!('teamId' in d.data())) updateDoc(d.ref, {teamId:''}).catch(()=>{});
+      S.users.forEach(fixStaleTeam);   // contas que ainda apontam para um time de onde saíram
       render();
     }));
     subs.push(onSnapshot(collection(db,'inviteIndex'), s => { S.inviteIdx = Object.fromEntries(s.docs.map(d=>[d.id, d.data().teamId])); render(); }, ()=>{}));
@@ -584,6 +597,8 @@ async function removeMember(tid, m){
     b.delete(doc(db,'teams',tid,'members',m.uid));
     if (m.email){ b.delete(doc(db,'teams',tid,'invites',m.email)); b.delete(doc(db,'inviteIndex',m.email)); }
     await b.commit();
+    // tira a marcação do time no perfil da pessoa (assim ela aparece livre na busca dos outros times)
+    await updateDoc(doc(db,'users',m.uid), {teamId:''}).catch(e=>console.warn('perfil', e?.code));
   }, 'Pessoa removida do time');
 }
 function areasSection(tid, manage){
@@ -726,11 +741,13 @@ function openAdminTeam(tid){
 async function deleteTeam(tid){
   await run(async()=>{
     const b = writeBatch(db);
-    for (const sub of ['levels','areas','invites']){
+    const uids = new Set(S.users.filter(u=>u.teamId===tid).map(u=>u.id));
+    for (const sub of ['levels','areas','invites','members']){
       const s = await getDocs(collection(db,'teams',tid,sub));
-      s.docs.forEach(d=>{ b.delete(d.ref); if (sub==='invites') b.delete(doc(db,'inviteIndex',d.id)); });
+      s.docs.forEach(d=>{ b.delete(d.ref); if (sub==='invites') b.delete(doc(db,'inviteIndex',d.id)); if (sub==='members') uids.add(d.id); });
     }
     b.delete(doc(db,'teams',tid));
+    uids.forEach(uid=>{ if (S.users.some(u=>u.id===uid)) b.update(doc(db,'users',uid), {teamId:''}); });
     await b.commit();
   }, 'Time excluído');
 }
