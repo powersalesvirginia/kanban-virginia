@@ -468,3 +468,20 @@ button.me:hover,button.me[aria-expanded="true"]{border-color:var(--accent)}
 .col-rail .cr-txt{writing-mode:vertical-rl;transform:rotate(180deg);font-size:12px;font-weight:600;letter-spacing:.03em;white-space:nowrap}
 .col.archive{opacity:.92}
 .col-note{margin:0 12px 6px;font-size:11px;color:var(--muted)}
+
+/* Comentários editáveis */
+.cmt-body header{flex-wrap:wrap}
+.cmt-edit{margin-left:auto;border:0;background:transparent;color:var(--muted);font:inherit;font-size:12px;padding:2px 6px;border-radius:6px;cursor:pointer;opacity:0;transition:opacity .15s}
+.cmt:hover .cmt-edit,.cmt-edit:focus-visible{opacity:1}
+@media (hover:none){.cmt-edit{opacity:1}}
+.cmt-edit:hover{background:var(--card);color:var(--ink)}
+.cmt.edited .cmt-body{border-left:3px solid var(--warn,#b8860b)}
+.cmt-edited{border:0;background:#f6ecd2;color:#7a5a08;font:inherit;font-size:11px;font-weight:600;padding:1px 7px;border-radius:999px;cursor:pointer}
+.cmt-editor textarea{width:100%;min-height:110px;resize:vertical;font:inherit;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)}
+.cmt-editor .inline{display:flex;gap:8px;justify-content:flex-end;margin-top:6px}
+.cmt-orig{margin-top:8px;padding:8px;border-radius:8px;background:var(--card);border:1px dashed var(--line);font-size:12px}
+.cmt-orig>small{display:block;color:var(--muted);font-weight:600;margin-bottom:4px}
+.cmt-orig .co-meta{color:var(--muted);font-size:11px}
+.cmt-orig p{margin:2px 0 6px;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--muted)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .cmt-edited{background:#4a3a10;color:#f1d58a}}
+:root[data-theme="dark"] .cmt-edited{background:#4a3a10;color:#f1d58a}

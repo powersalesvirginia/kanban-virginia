@@ -162,7 +162,14 @@ service cloud.firestore {
       match /comments/{id} {
         allow read: if isMember(t);
         allow create: if isMember(t) && request.resource.data.by == request.auth.uid;
-        allow update, delete: if isMember(t) && (resource.data.by == request.auth.uid || canManage(t));
+        // editar: o autor, quem gerencia o time ou um nível acima do autor (marcando quem editou)
+        allow update: if isMember(t) && (resource.data.by == request.auth.uid || canManage(t)
+            || (exists(/databases/$(database)/documents/teams/$(t)/members/$(resource.data.by))
+                && levelOf(t, memberOf(t, resource.data.by).levelId).rank > myLevel(t).rank))
+          && request.resource.data.by == resource.data.by && request.resource.data.at == resource.data.at
+          && request.resource.data.cardId == resource.data.cardId
+          && request.resource.data.get('editedBy', '') == request.auth.uid;
+        allow delete: if isMember(t) && (resource.data.by == request.auth.uid || canManage(t));
       }
 
       // Avisos: cada pessoa lê e marca como lidos só os seus; qualquer membro pode avisar outro

@@ -5,8 +5,8 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, query, where,
   onSnapshot, runTransaction,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig } from "./firebase-config.js?v=20261112-1049";
-const APP_VERSION = '12/11 10:49';   // aparece na tela para conferir qual versão está aberta
+import { firebaseConfig } from "./firebase-config.js?v=20261113-0929";
+const APP_VERSION = '13/11 09:29';   // aparece na tela para conferir qual versão está aberta
 
 const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);
@@ -769,6 +769,20 @@ async function createOccurrence(r, d){
 }
 
 /* ================= Comentários ================= */
+/* Editar comentário: o autor, ou alguém de nível acima do autor (ou quem gerencia o time) */
+const canEditComment = (c, V) => !!V && !S.readOnly && (c.by === V.id || isLider(V) || isAbove(V, mem(c.by)));
+async function editComment(card, c, text, V){
+  text = text.trim(); if (!text || text === c.text) return true;
+  const mentions = S.members.filter(m => m.id !== V.id && text.includes('@'+m.name)).map(m=>m.id);
+  const edits = [...(c.edits||[]), {text:c.text, at:c.editedAt||c.at, by:c.editedBy||c.by}].slice(-10);   // versões anteriores
+  const patch = {text, mentions, editedAt:nowISO(), editedBy:V.id, edits};
+  if (S.store === 'db'){
+    try{ await db.collection('comments').doc(c.id).update(clean(patch)); }catch(e){ onWriteError(e); return false; }
+  } else { Object.assign(S.localComments.find(x=>x.id===c.id)||{}, patch); persistLocal(); }
+  const fresh = mentions.filter(id => !(c.mentions||[]).includes(id));   // só avisa quem foi mencionado agora
+  if (fresh.length) withFyi(card, V, () => notifyMany(fresh, {cardId:card.id, title:card.title, by:V.id, ownerId:card.assigneeId||'', type:'mention'}, [V.id]));
+  return true;
+}
 async function addComment(card, text, V){
   text = text.trim(); if (!text) return false;
   const mentions = S.members.filter(m => m.id !== V.id && text.includes('@'+m.name)).map(m=>m.id);
@@ -1152,7 +1166,7 @@ function openCard(id, startTab){
   d.links = d.links || []; d.checklist = d.checklist || []; d.labels = d.labels || []; d.attachments = d.attachments || [];
   const ro = !isNew && !canEdit(base, V);
   let tab = startTab || 'detalhes', confirmDel = false, askTime = false, askReturn = false;
-  let draftComment = '', comments = [], unsub = null;
+  let draftComment = '', comments = [], unsub = null, editingCmt = null, editDraft = '', showOrig = null;
   const root = $('#modalRoot');
   const close = () => {
     if (unsub) unsub(); root.replaceChildren(); document.removeEventListener('keydown', esc);
@@ -1361,9 +1375,30 @@ function openCard(id, startTab){
       return parts;
     };
     return el('div',{class:'t-body'},
-      comments.length ? el('div',{class:'comments'}, comments.map(c=>el('div',{class:'cmt'},
-        el('span',{class:'who',text:initials(mname(c.by))}),
-        el('div',{class:'cmt-body'}, el('header',{}, el('b',{text:mname(c.by)}), el('span',{text:fmtDT(c.at)})), el('p',{}, renderText(c.text||''))))))
+      comments.length ? el('div',{class:'comments'}, comments.map(c=>{
+        const editing = editingCmt === c.id;
+        const edited = c.editedAt ? el('button',{type:'button',class:'cmt-edited',title:'Ver a versão anterior',onclick:()=>{ showOrig = showOrig===c.id ? null : c.id; draw(); }},
+          `editado${c.editedBy && c.editedBy !== c.by ? ` por ${firstName(mname(c.editedBy))}` : ''} · ${fmtDT(c.editedAt)}`) : null;
+        const tools = !editing && canEditComment(c, V) ? el('button',{type:'button',class:'cmt-edit','aria-label':'Editar comentário',title:'Editar comentário',onclick:()=>{ editingCmt = c.id; editDraft = c.text||''; draw();
+          setTimeout(()=>{ const t=document.getElementById('cmt-edit-'+c.id); if(t){ t.focus(); t.setSelectionRange(t.value.length,t.value.length); } },0); }},'✎ Editar') : null;
+        const body = editing
+          ? el('div',{class:'cmt-editor'},
+              el('textarea',{id:'cmt-edit-'+c.id,oninput:e=>editDraft=e.target.value,onkeydown:e=>{ if(e.key==='Escape'){ e.stopPropagation(); editingCmt=null; draw(); } }}, editDraft),
+              el('div',{class:'inline'},
+                el('button',{class:'btn ghost',type:'button',onclick:()=>{ editingCmt=null; draw(); }},'Cancelar'),
+                el('button',{class:'btn primary',type:'button',onclick:async()=>{
+                  if (!editDraft.trim()){ toast('O comentário não pode ficar vazio.'); return; }
+                  const ok = await editComment(S.cards.find(x=>x.id===base.id)||base, c, editDraft, V);
+                  if (ok){ editingCmt=null; if (S.store!=='db') comments = S.localComments.filter(x=>x.cardId===base.id); draw(); toast('Comentário editado'); }
+                }},'Salvar')))
+          : el('p',{}, renderText(c.text||''));
+        const prev = showOrig === c.id && (c.edits||[]).length ? el('div',{class:'cmt-orig'},
+          el('small',{text:'Versões anteriores'}),
+          ...c.edits.slice().reverse().map(x=>el('div',{}, el('span',{class:'co-meta',text:`${mname(x.by)} · ${fmtDT(x.at)}`}), el('p',{text:x.text})))) : null;
+        return el('div',{class:'cmt'+(c.editedAt?' edited':'')},
+          el('span',{class:'who',text:initials(mname(c.by))}),
+          el('div',{class:'cmt-body'}, el('header',{}, el('b',{text:mname(c.by)}), el('span',{text:fmtDT(c.at)}), edited, tools), body, prev));
+      }))
         : el('div',{class:'empty-note',text:'Nenhum comentário ainda.'}),
       canSee(base, V) && !S.readOnly ? el('div',{class:'composer'}, ta,
         people.length ? el('div',{class:'mentions'}, el('span',{text:'Mencionar:'}), people.map(p=>el('button',{type:'button',onclick:()=>{ draftComment = (draftComment && !/\s$/.test(draftComment) ? draftComment+' ' : draftComment) + '@'+p.name+' '; draw(); setTimeout(()=>{ const t=document.getElementById('cmt-text'); if(t){ t.focus(); t.setSelectionRange(t.value.length,t.value.length); } },0); }}, p.name))) : null,
